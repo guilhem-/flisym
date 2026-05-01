@@ -46,16 +46,18 @@ export class Aircraft {
    * {@link ControlDeflections} for sign conventions.
    */
   setControls(c: ControlDeflections): void {
-    // Ailerons: hinge along +Z. Right aileron up = trailing edge up =
-    //   rotation about +Z that brings the trailing edge (at -X) towards +Y,
-    //   which by right-hand rule is a positive rotation about +Z.
-    //   Right rolls right when right aileron up + left aileron down.
-    this.parts.rightAileron.rotation.set(0, 0, +c.aileron);
-    this.parts.leftAileron.rotation.set(0, 0, -c.aileron);
+    // Ailerons: hinge along +Z. With trailing edge at -X (behind the hinge),
+    //   a rotation by +θ about +Z sends -X towards -Y (trailing edge DOWN).
+    //   For a right-roll command (+aileron) we want the RIGHT trailing edge
+    //   UP and LEFT trailing edge DOWN, so right uses -aileron and left uses
+    //   +aileron. (Matches the convention documented at the top of cessna.ts.)
+    this.parts.rightAileron.rotation.set(0, 0, -c.aileron);
+    this.parts.leftAileron.rotation.set(0, 0, +c.aileron);
 
-    // Elevator: hinge along +Z. +elevator (pitch up) = trailing edge up =
-    //   rotation about +Z by +elevator.
-    this.parts.elevator.rotation.set(0, 0, +c.elevator);
+    // Elevator: hinge along +Z. +elevator (pitch-up command) = trailing edge
+    //   UP. With the trailing edge at -X, that's a NEGATIVE rotation about
+    //   +Z (since +Z-rotation by +θ maps -X → -Y, i.e. trailing edge DOWN).
+    this.parts.elevator.rotation.set(0, 0, -c.elevator);
 
     // Rudder: hinge along +Y. +rudder (yaw right) = trailing edge to +Z
     //   (right). Trailing edge is at -X relative to the pivot, so rotating
@@ -63,11 +65,11 @@ export class Aircraft {
     //   about +Y by right-hand rule.
     this.parts.rudder.rotation.set(0, +c.rudder, 0);
 
-    // Flaps: hinge along +Z. Flaps down = trailing edge down (towards -Y).
-    //   Rotation about +Z that moves -X (trailing edge) towards -Y is a
-    //   negative rotation about +Z. Convention: callers pass non-negative
-    //   `flaps` for a flaps-down deployment.
-    this.parts.flaps.rotation.set(0, 0, -c.flaps);
+    // Flaps: hinge along +Z. Flaps down = trailing edge DOWN (-Y). With the
+    //   trailing edge at -X, rotation by +θ about +Z sends -X → -Y, so a
+    //   POSITIVE rotation deploys the flap. Convention: callers pass
+    //   non-negative `flaps` for a flaps-down deployment.
+    this.parts.flaps.rotation.set(0, 0, +c.flaps);
   }
 
   /**
