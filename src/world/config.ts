@@ -112,6 +112,35 @@ export const WORLD_CONFIG = {
     position: [-700, 0.5, 0] as const,
     headingDeg: 0,
   },
+
+  // §12 Mountain bias — localized ridges added on top of the simplex noise
+  // (BEFORE the runway flatten mask). Provides scale and reference points for
+  // approach/departure. See `/AGENTS/challenge-mountains.md`.
+  mountains: {
+    primary: {
+      cx: 0,
+      cz: -12000,
+      // Cosine envelope along x: full inside |x|<envelopeFull, zero past envelopeZero.
+      envelopeFull: 10000,
+      envelopeZero: 15000,
+      // Gaussian falloff in z.
+      sigmaZ: 1500,
+      peakHeight: 1800,
+      // Sharpening detail noise (uses the shared simplex instance).
+      sharpenAmplitude: 250,
+      sharpenScale: 2000,
+    },
+    secondary: {
+      cx: 18000,
+      cz: 0,
+      // Length 8000m along z → cosine envelope along z.
+      envelopeFull: 2000,
+      envelopeZero: 4000,
+      // Gaussian falloff in x.
+      sigmaX: 2000,
+      peakHeight: 800,
+    },
+  },
 } as const;
 
 export type WorldConfig = typeof WORLD_CONFIG;

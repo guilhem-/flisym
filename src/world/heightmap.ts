@@ -89,6 +89,57 @@ function rawHeight(x: number, z: number, noise: NoiseFunction2D): number {
 }
 
 /**
+ * Cosine envelope: 1 inside [-full, +full], 0 outside [-zero, +zero], smooth
+ * half-cosine taper in between. Used to give mountain ridges soft ends without
+ * creating a step at the boundary.
+ */
+function cosineEnvelope(t: number, full: number, zero: number): number {
+  const a = Math.abs(t);
+  if (a <= full) return 1;
+  if (a >= zero) return 0;
+  // Half-cosine: 1 at full, 0 at zero.
+  const u = (a - full) / (zero - full);
+  return 0.5 * (1 + Math.cos(Math.PI * u));
+}
+
+/**
+ * Mountain bias — additive ridge displacement added to the natural noise
+ * BEFORE the runway flatten mask. Two ridges:
+ *   - Primary: east-west ridge centered at (0, -12000), 30 km long, peak
+ *     +1800 m, Gaussian σ=1500 in z, cosine envelope in x. Sharpened along
+ *     the ridge line with abs(simplex) noise (shared instance — no second
+ *     seed) so peaks read as crags rather than a smooth wall.
+ *   - Secondary: smaller ridge to the east at (18000, 0), 8 km along z,
+ *     peak +800 m, Gaussian σ=2000 in x.
+ *
+ * Both ridges are far enough from the runway (origin) that they do not
+ * interact with the flatten mask in practice, but applying the bias before
+ * the mask preserves correctness if a future ridge is placed nearby.
+ */
+export function mountainBias(x: number, z: number, noise: NoiseFunction2D): number {
+  const m = WORLD_CONFIG.mountains;
+
+  // Primary east-west ridge.
+  const p = m.primary;
+  const dxP = x - p.cx;
+  const dzP = z - p.cz;
+  const envP = cosineEnvelope(dxP, p.envelopeFull, p.envelopeZero);
+  const gaussP = Math.exp(-(dzP * dzP) / (2 * p.sigmaZ * p.sigmaZ));
+  const sharpen = p.sharpenAmplitude * Math.abs(noise(x / p.sharpenScale, z / p.sharpenScale));
+  const primary = envP * gaussP * (p.peakHeight + sharpen);
+
+  // Secondary ridge to the east, oriented along z.
+  const s = m.secondary;
+  const dxS = x - s.cx;
+  const dzS = z - s.cz;
+  const envS = cosineEnvelope(dzS, s.envelopeFull, s.envelopeZero);
+  const gaussS = Math.exp(-(dxS * dxS) / (2 * s.sigmaX * s.sigmaX));
+  const secondary = envS * gaussS * s.peakHeight;
+
+  return primary + secondary;
+}
+
+/**
  * Final ground height at world (x, z). Includes runway flatten + min-clamp.
  *
  * @param x world X (meters)
@@ -97,7 +148,9 @@ function rawHeight(x: number, z: number, noise: NoiseFunction2D): number {
  */
 export function getHeightAt(x: number, z: number, noise?: NoiseFunction2D): number {
   const n = noise ?? getDefaultNoise();
-  const natural = rawHeight(x, z, n);
+  // Mountain bias is added BEFORE the runway flatten mask, so the runway stays
+  // perfectly flat even if a ridge were placed near it.
+  const natural = rawHeight(x, z, n) + mountainBias(x, z, n);
   const mask = runwayFlattenMask(x, z);
   // mask=1 → 0; mask=0 → natural; lerp.
   const blended = natural * (1 - mask);
