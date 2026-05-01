@@ -13,6 +13,7 @@ import { KeyboardInput } from './input/index.js';
 import { HUD } from './hud/index.js';
 import { CameraRig } from './camera/index.js';
 import { EngineSound } from './audio/engine.js';
+import { GateCourse } from './challenge/index.js';
 
 const scene = new THREE.Scene();
 
@@ -22,6 +23,9 @@ scene.fog = world.fog;
 
 const aircraft = new Aircraft();
 scene.add(aircraft.group);
+
+const course = new GateCourse();
+scene.add(course.mesh);
 
 const state = createInitialState();
 state.x_W.set(-700, FLIGHT_MODEL.groundY, 0);
@@ -89,6 +93,14 @@ window.addEventListener('time:set', (e: Event) => {
   }
 });
 
+// Challenge: track whether the finish overlay has been shown for this run.
+let finishShown = false;
+window.addEventListener('challenge:reset', () => {
+  course.reset();
+  hud.hideFinishOverlay();
+  finishShown = false;
+});
+
 function syncAircraftToState(): void {
   aircraft.group.position.copy(state.x_W);
   aircraft.group.quaternion.copy(state.q);
@@ -107,6 +119,15 @@ function animate(): void {
   input.update(dt, controls);
   advance(state, dt, controls, getGroundHeight);
   hud.update(state);
+
+  // Challenge gate course: tick logic and surface state to HUD.
+  const gs = course.update(state.x_W, state.v_W, dt);
+  hud.setChallenge(gs);
+  if (gs.finished && !finishShown) {
+    hud.showFinishOverlay(gs.courseTime, gs.missed);
+    finishShown = true;
+  }
+
   syncAircraftToState();
   aircraft.update(dt);
 

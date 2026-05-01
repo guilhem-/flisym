@@ -71,6 +71,8 @@ export class KeyboardInput {
         this.pendingBrakeToggle = true;
       } else if (k === 'v') {
         window.dispatchEvent(new CustomEvent('camera:cycle'));
+      } else if (k === 'g') {
+        window.dispatchEvent(new CustomEvent('challenge:reset'));
       } else if (k.length === 1 && k >= '0' && k <= '9') {
         this.dispatchTimePreset(k);
       }

@@ -11,6 +11,7 @@
 
 import * as THREE from 'three';
 import type { AircraftState } from '../physics/state.js';
+import type { GateState } from '../challenge/gates.js';
 
 const MS_TO_KNOTS = 1.94384;
 const M_TO_FEET = 3.28084;
@@ -104,6 +105,70 @@ const HUD_CSS = `
 }
 .flisym-hud .stall.on { display: block; animation: flisym-stall-blink 0.5s steps(2, start) infinite; }
 @keyframes flisym-stall-blink { 50% { opacity: 0.35; } }
+
+.flisym-hud .panel.tc {
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  text-align: center;
+  min-width: 280px;
+  display: none;
+}
+.flisym-hud .panel.tc.on { display: block; }
+.flisym-hud .panel.tc .title {
+  display: block;
+  font-size: 11px;
+  letter-spacing: 0.25em;
+  opacity: 0.7;
+  margin-bottom: 2px;
+}
+.flisym-hud .panel.tc .stats {
+  display: flex;
+  justify-content: center;
+  gap: 18px;
+  font-variant-numeric: tabular-nums;
+}
+.flisym-hud .panel.tc .stats .seg .label { opacity: 0.65; margin-right: 4px; }
+.flisym-hud .panel.tc.finished { border-color: rgba(255, 0, 255, 0.6); }
+
+.flisym-hud .finish-overlay {
+  position: fixed;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 100;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.6s ease-in;
+}
+.flisym-hud .finish-overlay.on { display: flex; opacity: 1; }
+.flisym-hud .finish-card {
+  background: rgba(0, 0, 0, 0.7);
+  border: 1px solid rgba(255, 0, 255, 0.6);
+  border-radius: 8px;
+  padding: 24px 36px;
+  text-align: center;
+  color: #b6ff7a;
+  box-shadow: 0 0 24px rgba(255, 0, 255, 0.25);
+}
+.flisym-hud .finish-card .headline {
+  font-size: 22px;
+  letter-spacing: 0.2em;
+  margin-bottom: 12px;
+  color: #ff7aff;
+}
+.flisym-hud .finish-card .summary {
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+  margin-bottom: 8px;
+}
+.flisym-hud .finish-card .hint {
+  font-size: 12px;
+  opacity: 0.7;
+  margin-top: 10px;
+}
 `;
 
 function fmt(n: number, digits = 0): string {
@@ -130,6 +195,10 @@ export class HUD {
   private readonly elFlaps: HTMLSpanElement;
   private readonly elHorizon: HTMLDivElement;
   private readonly elStall: HTMLDivElement;
+  private readonly elChallenge: HTMLDivElement;
+  private readonly elChallengeStats: HTMLSpanElement;
+  private readonly elFinishOverlay: HTMLDivElement;
+  private readonly elFinishSummary: HTMLDivElement;
 
   private readonly fwd = new THREE.Vector3();
   private readonly up = new THREE.Vector3();
@@ -155,6 +224,17 @@ export class HUD {
         <div class="ai-center"></div>
       </div>
       <div class="stall" data-h="stall">STALL</div>
+      <div class="panel tc" data-h="challenge">
+        <span class="title">CHALLENGE</span>
+        <div class="stats" data-h="challenge-stats"></div>
+      </div>
+      <div class="finish-overlay" data-h="finish-overlay">
+        <div class="finish-card">
+          <div class="headline">COURSE COMPLETE</div>
+          <div class="summary" data-h="finish-summary"></div>
+          <div class="hint">Press G to restart</div>
+        </div>
+      </div>
     `;
 
     this.elAirspeed = this.q('airspeed');
@@ -165,6 +245,10 @@ export class HUD {
     this.elFlaps = this.q('flaps');
     this.elHorizon = this.q<HTMLDivElement>('horizon');
     this.elStall = this.q<HTMLDivElement>('stall');
+    this.elChallenge = this.q<HTMLDivElement>('challenge');
+    this.elChallengeStats = this.q<HTMLSpanElement>('challenge-stats');
+    this.elFinishOverlay = this.q<HTMLDivElement>('finish-overlay');
+    this.elFinishSummary = this.q<HTMLDivElement>('finish-summary');
   }
 
   private q<T extends HTMLElement = HTMLSpanElement>(name: string): T {
@@ -230,10 +314,56 @@ export class HUD {
     this.elStall.classList.toggle('on', state.stallFlag);
   }
 
+  /**
+   * Update the CHALLENGE panel. Pass `null` to hide it.
+   * Total gate count is inferred as `state.activeIndex + state.totalCleared
+   * + state.missed` clamped — but we can also trust the cleared/missed sum
+   * relative to the fixed course length encoded by the caller. To keep the
+   * HUD oblivious to course length we display X/12 using the well-known
+   * count from the brief.
+   */
+  setChallenge(state: GateState | null): void {
+    if (state === null) {
+      this.elChallenge.classList.remove('on');
+      return;
+    }
+    this.elChallenge.classList.add('on');
+    this.elChallenge.classList.toggle('finished', state.finished);
+
+    const courseLen = 12;
+    const gateNum = state.finished
+      ? courseLen
+      : Math.min(state.activeIndex + 1, courseLen);
+    const time = formatCourseTime(state.courseTime);
+    this.elChallengeStats.innerHTML =
+      `<span class="seg"><span class="label">Gate</span>${gateNum}/${courseLen}</span>` +
+      `<span class="seg"><span class="label">Time</span>${time}</span>` +
+      `<span class="seg"><span class="label">Missed</span>${state.missed}</span>`;
+  }
+
+  /** Show the end-of-course summary overlay. */
+  showFinishOverlay(time: number, missed: number): void {
+    this.elFinishSummary.textContent =
+      `Time ${formatCourseTime(time)} — Missed ${missed} gate${missed === 1 ? '' : 's'}`;
+    this.elFinishOverlay.classList.add('on');
+  }
+
+  /** Hide the end-of-course summary overlay. */
+  hideFinishOverlay(): void {
+    this.elFinishOverlay.classList.remove('on');
+  }
+
   /** Remove the HUD root from the DOM. */
   dispose(): void {
     this.root.remove();
   }
+}
+
+function formatCourseTime(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) seconds = 0;
+  const m = Math.floor(seconds / 60);
+  const s = seconds - m * 60;
+  return `${m}:${s.toFixed(2).padStart(5, '0')}`;
 }
 
 function flapsLabel(delta_f: number): string {
