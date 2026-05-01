@@ -1,30 +1,27 @@
 # Current State
 
-**Phase**: 2 — Implementation, parallel
-**Last update**: 2026-05-01 23:25 IST (~14 min in)
-**Agent dispatches so far**: 6
-**Time elapsed**: ~0.25h / 8h budget
+**Phase**: 3 — HUD + Camera
+**Last update**: 2026-05-01 23:35 IST
+**Agent dispatches so far**: 8
+**Time elapsed**: ~24 min / 480 min budget (5%)
 
 ## Done
-- P0: scaffolding (PRODUCER.md, STATE.md, LOG.md, AGENTS/, briefs)
-- P1: Architect → TS+Vite+Three.js skeleton (commit f3c4161). `npm install`/`npm run build` verified. Bundle 466 kB / 117 kB gz.
-- P1: WorldDesigner → docs/world-spec.md (committed)
-- P1: PhysicsDesigner → docs/physics-spec.md (committed bfc0e32)
+- P0: scaffolding ✅
+- P1: Architect, WorldDesigner, PhysicsDesigner ✅
+- P2: TerrainCoder, AircraftArtist, FlightCoder ✅
+- P2.5: Producer integration of FlightModel + Aircraft into main.ts; build green at 526 kB / 138 kB gz.
 
-## In flight (background agents)
-- TerrainCoder (a50cea80af3b50fa0) — building src/world/ + integrating into main.ts
-- AircraftArtist (af010bc44a5dbd751) — building src/aircraft/ (does NOT touch main.ts)
-- FlightCoder (ab7e72ce6e2c6a77f) — building src/physics/ + a smoke test (does NOT touch main.ts)
+## In flight (background)
+- HUDCoder (a682bb6c22701152f) — building src/input/, src/hud/, wiring into main.ts
+- CameraCoder (a073480792554291e) — building src/camera/ (no main.ts changes)
 
-## Next action (read this on restart)
-1. Wait for the 3 P2 agents to complete (auto-notified).
-2. Resolve any merge conflicts if main.ts or package.json was touched by multiple agents (only TerrainCoder is writing main.ts).
-3. Run `npx tsc --noEmit && npm run build` to confirm green build.
-4. Producer integrates: place Aircraft inside scene at spawn, wire FlightModel.state → aircraft.group transform.
-5. Dispatch P3 wave: HUDCoder + CameraCoder in parallel.
-6. Then P4: TestEngineer + Polish.
-7. Then P5: Reviewer.
-8. Then P6: Ship.
+## Next action (read on restart)
+1. Wait for HUD + Camera to complete.
+2. Producer: integrate CameraRig into main.ts (replace provisional chase camera). CameraCoder will leave instructions in its report.
+3. Run `npm run build` — verify green.
+4. Dispatch P4: TestEngineer + Polish in parallel.
+5. P5: Reviewer.
+6. P6: Ship — write SHIPPED.md, final commit.
 
 ## Dispatch ledger
 | # | Time | Role | Status |
@@ -32,20 +29,31 @@
 | 1 | 23:13 | Architect | ✅ |
 | 2 | 23:13 | PhysicsDesigner | ✅ |
 | 3 | 23:13 | WorldDesigner | ✅ |
-| 4 | 23:24 | TerrainCoder | running |
-| 5 | 23:24 | AircraftArtist | running |
-| 6 | 23:25 | FlightCoder | running |
+| 4 | 23:24 | TerrainCoder | ✅ |
+| 5 | 23:24 | AircraftArtist | ✅ |
+| 6 | 23:25 | FlightCoder | ✅ |
+| 7 | 23:35 | HUDCoder | running |
+| 8 | 23:35 | CameraCoder | running |
+
+## Bundle / quality budget
+- Bundle: 526 kB (gzip 138 kB). Above 500 kB warning — acceptable; consider chunking later.
+- Triangle count: terrain 79.2k + runway 480 + water 2 + sky 12 + aircraft 1432 = ~81.1k.
 
 ## Open risks
-- main.ts merge if FlightCoder ignores conflict guard (mitigation: it shouldn't).
-- TerrainCoder might add `simplex-noise` and conflict with package.json edits from FlightCoder (FlightCoder is told not to add deps — should be safe).
-- 8h is tight; pacing on track so far (Phase 0+1 in 0.25h).
+- Sign convention bugs (HUD heading vs world heading) — Reviewer pass will catch.
+- Camera "free" mode WASD might collide with flight WASD; CameraCoder told to gate by mode.
+- HUD `update(state)` may not match the AircraftState type — keep an eye.
 
-## Phase plan (unchanged)
-- **P0** (0–0.25h): scaffold ✅
-- **P1** (0.25–0.5h): design specs ✅ (faster than planned)
-- **P2** (0.5–2h): client scaffold + terrain + flight model + aircraft (in progress)
-- **P3** (2–4h): HUD + input + camera, integration
-- **P4** (4–5.5h): tests, polish
-- **P5** (5.5–7h): reviewer + bugfix
-- **P6** (7–8h): ship
+## Phase plan
+- P0–P2.5 (0–25min) ✅
+- P3 (25–60min): HUD + Camera + integration
+- P4 (60–120min): Tests + Polish
+- P5 (120–180min): Reviewer
+- P6 (180–...): Ship + buffer for challenges (wind, multiplayer stretch)
+
+## Challenges to add (use buffer)
+1. Wind layer (Polish brief #2)
+2. Engine sound (Polish brief #1)
+3. Day/night auto-cycle (Polish brief #3)
+4. Approach/landing scoring (potential new agent)
+5. Multiplayer presence — only if all of above done by 5h mark.
