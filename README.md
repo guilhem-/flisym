@@ -24,6 +24,28 @@ dark background — that is the toolchain proof.
 | `npm run typecheck` | Run `tsc --noEmit` |
 | `npm test` | Run Vitest once |
 | `npm run test:watch` | Run Vitest in watch mode |
+| `npm run server` | Start the multiplayer presence server (ws, port 3030) |
+
+## Multiplayer
+
+Lightweight presence: see other pilots' aircraft in the same world. No
+matchmaking, no auth — strictly local trust.
+
+```bash
+# Terminal 1 — start the WebSocket presence server (default port 3030).
+npm run server
+
+# Terminal 2 — start the Vite dev server.
+npm run dev
+```
+
+Open the dev URL in two (or more) browser tabs. In each tab, press
+**M** once to connect. You should see the other tabs' aircraft as live
+peer Cessnas in the same scene.
+
+Override the server URL at build time via `VITE_FLISYM_WS_URL`
+(e.g. `VITE_FLISYM_WS_URL=ws://192.168.1.42:3030 npm run dev`). The
+server port can be changed with `FLISYM_PORT=4040 npm run server`.
 
 ## Project layout
 

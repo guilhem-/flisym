@@ -14,6 +14,7 @@ import { HUD } from './hud/index.js';
 import { CameraRig } from './camera/index.js';
 import { EngineSound } from './audio/engine.js';
 import { GateCourse } from './challenge/index.js';
+import { NetClient } from './net/index.js';
 
 const scene = new THREE.Scene();
 
@@ -93,6 +94,25 @@ window.addEventListener('time:set', (e: Event) => {
   }
 });
 
+// --- Multiplayer presence (lazy connect) ---------------------------------
+// Press M once to connect to the presence server. URL can be overridden via
+// `VITE_FLISYM_WS_URL` at build time; defaults to localhost:3030.
+const net = new NetClient();
+scene.add(net.getRoot());
+const wsUrl =
+  (import.meta.env as { VITE_FLISYM_WS_URL?: string } | undefined)
+    ?.VITE_FLISYM_WS_URL ?? 'ws://localhost:3030';
+let netConnected = false;
+const onMKey = (e: KeyboardEvent): void => {
+  if (netConnected) return;
+  if (e.key === 'm' || e.key === 'M') {
+    netConnected = true;
+    net.connect(wsUrl);
+    window.removeEventListener('keydown', onMKey);
+  }
+};
+window.addEventListener('keydown', onMKey);
+
 // Challenge: track whether the finish overlay has been shown for this run.
 let finishShown = false;
 window.addEventListener('challenge:reset', () => {
@@ -145,6 +165,10 @@ function animate(): void {
 
   aircraftVelocity.copy(state.v_W);
   cameraRig.update(dt, aircraft.group, aircraftVelocity);
+
+  // Multiplayer: send our state at 30 Hz and lerp peer aircraft each frame.
+  net.update(state, dt);
+
   renderer.render(scene, camera);
   requestAnimationFrame(animate);
 }
