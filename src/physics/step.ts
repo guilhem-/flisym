@@ -29,6 +29,18 @@ const _M_B = new THREE.Vector3();
 const _omega_W = new THREE.Vector3();
 const _dqVec = new THREE.Quaternion();
 const _qOut = new THREE.Quaternion();
+const _vWSaved = new THREE.Vector3();
+
+/**
+ * Optional ambient wind sampler (inertial frame, m/s). Set by the host (e.g.
+ * main.ts) so physics can compute relative airspeed without baking wind into
+ * `state.v_W` (which would corrupt position integration). Default: zero wind.
+ */
+export type WindFn = (altitude: number, time: number) => THREE.Vector3;
+let _windFn: WindFn | null = null;
+export function setWindFn(fn: WindFn | null): void {
+  _windFn = fn;
+}
 
 /** Function the integrator calls to query terrain height at (x, z). */
 export type GroundHeightFn = (x: number, z: number) => number;
@@ -62,7 +74,20 @@ export function physicsStep(
   const rho = density(altitude);
   const sigma = rho / C.rho0;
 
-  const aero = computeAeroForcesMoments(state, rho);
+  // If a wind sampler is registered, transiently swap state.v_W for the
+  // air-relative velocity (v_W − wind) while computing aero forces, then
+  // restore. This keeps aero seeing relative airspeed while leaving the
+  // inertial v_W untouched for the position integrator below.
+  let aero;
+  if (_windFn) {
+    const wind = _windFn(state.x_W.y, state.time);
+    _vWSaved.copy(state.v_W);
+    state.v_W.sub(wind);
+    aero = computeAeroForcesMoments(state, rho);
+    state.v_W.copy(_vWSaved);
+  } else {
+    aero = computeAeroForcesMoments(state, rho);
+  }
   if (aero.stall) state.stallFlag = true;
 
   const v_B_x = bodyVelocityForwardComponent(state);

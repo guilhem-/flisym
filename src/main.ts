@@ -1,15 +1,18 @@
 import * as THREE from 'three';
 import { World } from './world/index.js';
+import { getWind } from './world/wind.js';
 import { Aircraft } from './aircraft/index.js';
 import {
   advance,
   createInitialState,
   createNeutralControls,
+  setWindFn,
   FLIGHT_MODEL,
 } from './physics/index.js';
 import { KeyboardInput } from './input/index.js';
 import { HUD } from './hud/index.js';
 import { CameraRig } from './camera/index.js';
+import { EngineSound } from './audio/engine.js';
 
 const scene = new THREE.Scene();
 
@@ -59,6 +62,33 @@ const aircraftVelocity = new THREE.Vector3();
 const RPM_IDLE = 700;
 const RPM_FULL = 2400;
 
+// --- Wind layer ----------------------------------------------------------
+// Hand the physics step a sampler so it can compute air-relative velocity.
+setWindFn((altitude, time) => getWind(altitude, time));
+
+// --- Engine sound (lazy-start on first user gesture) ---------------------
+const engineSound = new EngineSound();
+window.addEventListener(
+  'keydown',
+  () => {
+    engineSound.start();
+  },
+  { once: true },
+);
+
+// --- Time-of-day clock ---------------------------------------------------
+// `worldClock` in hours (0..24). Per the brief: speed = 1.0 → 1 in-game
+// second per real second. One in-game second = 1/3600 hour, so we advance
+// `worldClock` by `dt * TIME_SPEED_HOURS_PER_SEC`.
+let worldClock = 14.0;
+const TIME_SPEED_HOURS_PER_SEC = 1.0 / 3600;
+window.addEventListener('time:set', (e: Event) => {
+  const detail = (e as CustomEvent<number>).detail;
+  if (typeof detail === 'number' && Number.isFinite(detail)) {
+    worldClock = detail;
+  }
+});
+
 function syncAircraftToState(): void {
   aircraft.group.position.copy(state.x_W);
   aircraft.group.quaternion.copy(state.q);
@@ -79,7 +109,19 @@ function animate(): void {
   hud.update(state);
   syncAircraftToState();
   aircraft.update(dt);
+
+  // Advance world clock and drive the sun/sky/fog tint each frame.
+  worldClock = (worldClock + dt * TIME_SPEED_HOURS_PER_SEC) % 24;
+  world.setTimeOfDay(worldClock);
   world.update(dt);
+
+  // Engine audio follows propeller RPM and stall flag.
+  engineSound.update(
+    state.throttle,
+    RPM_IDLE + (RPM_FULL - RPM_IDLE) * state.throttle,
+    state.stallFlag,
+  );
+
   aircraftVelocity.copy(state.v_W);
   cameraRig.update(dt, aircraft.group, aircraftVelocity);
   renderer.render(scene, camera);
