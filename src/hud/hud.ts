@@ -12,6 +12,7 @@
 import * as THREE from 'three';
 import type { AircraftState } from '../physics/state.js';
 import type { GateState } from '../challenge/gates.js';
+import { ILSIndicator } from './ils.js';
 
 const MS_TO_KNOTS = 1.94384;
 const M_TO_FEET = 3.28084;
@@ -204,6 +205,11 @@ export class HUD {
   private readonly up = new THREE.Vector3();
   private readonly right = new THREE.Vector3();
 
+  private readonly ils: ILSIndicator;
+  private ilsWasActive = false;
+  private approachAudioCtx: AudioContext | null = null;
+  private approachAudioFailed = false;
+
   constructor() {
     this.injectStyle();
     this.root = document.createElement('div');
@@ -249,6 +255,9 @@ export class HUD {
     this.elChallengeStats = this.q<HTMLSpanElement>('challenge-stats');
     this.elFinishOverlay = this.q<HTMLDivElement>('finish-overlay');
     this.elFinishSummary = this.q<HTMLDivElement>('finish-summary');
+
+    this.ils = new ILSIndicator();
+    this.root.appendChild(this.ils.root);
   }
 
   private q<T extends HTMLElement = HTMLSpanElement>(name: string): T {
@@ -312,6 +321,42 @@ export class HUD {
 
     // --- Stall flag.
     this.elStall.classList.toggle('on', state.stallFlag);
+
+    // --- ILS approach guidance (lower-left). Single-edge tone on activation.
+    const reading = this.ils.update(state);
+    if (reading.active && !this.ilsWasActive) {
+      this.playApproachTone();
+    }
+    this.ilsWasActive = reading.active;
+  }
+
+  /** One-shot 1200 Hz sine beep (200 ms, gain 0.05). Silently no-ops on failure. */
+  private playApproachTone(): void {
+    if (this.approachAudioFailed) return;
+    try {
+      let ctx = this.approachAudioCtx;
+      if (!ctx) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const C = (window as any).AudioContext || (window as any).webkitAudioContext;
+        if (!C) { this.approachAudioFailed = true; return; }
+        ctx = new C() as AudioContext;
+        this.approachAudioCtx = ctx;
+      }
+      const t = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.value = 1200;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(0.05, t + 0.01);
+      g.gain.setValueAtTime(0.05, t + 0.19);
+      g.gain.linearRampToValueAtTime(0, t + 0.2);
+      osc.connect(g).connect(ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.21);
+    } catch {
+      this.approachAudioFailed = true;
+    }
   }
 
   /**
