@@ -7,6 +7,8 @@ import {
   createNeutralControls,
   FLIGHT_MODEL,
 } from './physics/index.js';
+import { KeyboardInput } from './input/index.js';
+import { HUD } from './hud/index.js';
 
 const scene = new THREE.Scene();
 
@@ -43,6 +45,10 @@ window.addEventListener('resize', () => {
 const getGroundHeight = (x: number, z: number): number =>
   world.getGroundHeight(x, z);
 
+const input = new KeyboardInput();
+const hud = new HUD();
+document.body.appendChild(hud.root);
+
 // Chase-camera scratch state.
 const chaseOffset = new THREE.Vector3(-18, 4.5, 0);
 const chaseTargetLookAt = new THREE.Vector3();
@@ -75,7 +81,9 @@ function syncAircraftToState(): void {
 const clock = new THREE.Clock();
 function animate(): void {
   const dt = Math.min(clock.getDelta(), 0.1);
+  input.update(dt, controls);
   advance(state, dt, controls, getGroundHeight);
+  hud.update(state);
   syncAircraftToState();
   aircraft.update(dt);
   world.update(dt);
