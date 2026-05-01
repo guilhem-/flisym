@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { World, WORLD_CONFIG } from './world/index.js';
+import { World } from './world/index.js';
 import { Aircraft } from './aircraft/index.js';
 import {
   advance,
@@ -9,6 +9,7 @@ import {
 } from './physics/index.js';
 import { KeyboardInput } from './input/index.js';
 import { HUD } from './hud/index.js';
+import { CameraRig } from './camera/index.js';
 
 const scene = new THREE.Scene();
 
@@ -49,19 +50,11 @@ const input = new KeyboardInput();
 const hud = new HUD();
 document.body.appendChild(hud.root);
 
-// Chase-camera scratch state.
-const chaseOffset = new THREE.Vector3(-18, 4.5, 0);
-const chaseTargetLookAt = new THREE.Vector3();
-const chaseDesiredPos = new THREE.Vector3();
+const cameraRig = new CameraRig(camera);
+cameraRig.attachInput();
+cameraRig.setMode('chase', true);
 
-function updateChaseCamera(dt: number): void {
-  const offsetWorld = chaseOffset.clone().applyQuaternion(aircraft.group.quaternion);
-  chaseDesiredPos.copy(aircraft.group.position).add(offsetWorld);
-  const lerp = 1 - Math.exp(-dt * 5);
-  camera.position.lerp(chaseDesiredPos, lerp);
-  chaseTargetLookAt.copy(aircraft.group.position);
-  camera.lookAt(chaseTargetLookAt);
-}
+const aircraftVelocity = new THREE.Vector3();
 
 const RPM_IDLE = 700;
 const RPM_FULL = 2400;
@@ -87,13 +80,12 @@ function animate(): void {
   syncAircraftToState();
   aircraft.update(dt);
   world.update(dt);
-  updateChaseCamera(dt);
+  aircraftVelocity.copy(state.v_W);
+  cameraRig.update(dt, aircraft.group, aircraftVelocity);
   renderer.render(scene, camera);
   requestAnimationFrame(animate);
 }
 
-camera.position.set(-WORLD_CONFIG.runway.length / 2 - 30, 6, 0);
-camera.lookAt(aircraft.group.position);
 animate();
 
 // Expose for debugging/HUD/Camera modules to wire into.
@@ -105,7 +97,8 @@ declare global {
     aircraft: Aircraft;
     world: World;
     camera: THREE.PerspectiveCamera;
+    cameraRig: CameraRig;
     scene: THREE.Scene;
   };
 }
-globalThis.FLISYM = { state, controls, aircraft, world, camera, scene };
+globalThis.FLISYM = { state, controls, aircraft, world, camera, cameraRig, scene };
