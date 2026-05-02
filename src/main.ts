@@ -17,6 +17,9 @@ import { GateCourse } from './challenge/index.js';
 import { NetClient } from './net/index.js';
 
 const scene = new THREE.Scene();
+// Fallback sky color so the canvas never reads pure black if the Sky shader
+// fails to draw on a given frame (e.g. before the first sun position is set).
+scene.background = new THREE.Color(0x87b6e8);
 
 const world = new World();
 scene.add(world.mesh);

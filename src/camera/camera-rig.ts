@@ -78,6 +78,10 @@ export class CameraRig {
   private mouseDx = 0;
   private mouseDy = 0;
 
+  // When true, the next chase update skips the exponential lerp and snaps
+  // straight to the computed pose. Set by setMode(name, instant=true).
+  private snapNextChase = true;
+
   // Tween state for mode transitions.
   private readonly tween: TweenState = {
     active: false,
@@ -140,6 +144,10 @@ export class CameraRig {
     if (name === this.mode && !this.tween.active) return;
     if (instant) {
       this.tween.active = false;
+      // Suppress the chase-mode lerp on the very next update so the camera
+      // snaps to its computed pose instead of dragging in from wherever it
+      // happened to be (e.g. world origin on bootstrap).
+      this.snapNextChase = true;
     } else {
       this.tween.active = true;
       this.tween.t = 0;
@@ -254,6 +262,12 @@ export class CameraRig {
       // While tweening, just publish the snap target; the tween blender will
       // smooth from `fromPos` to here.
       this.desiredPos.copy(desiredWorld);
+    } else if (this.snapNextChase) {
+      // First frame after a setMode(..., instant=true): snap straight to the
+      // computed pose instead of dragging in from world origin.
+      this.camera.position.copy(desiredWorld);
+      this.desiredPos.copy(desiredWorld);
+      this.snapNextChase = false;
     } else {
       const k = 1 - Math.exp(-dt * 5);
       this.camera.position.lerp(desiredWorld, k);
