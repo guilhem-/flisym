@@ -48,15 +48,15 @@ const HUD_CSS = `
 .flisym-hud .ai {
   position: absolute;
   left: 50%;
-  top: 50%;
-  width: 220px;
-  height: 220px;
-  margin-left: -110px;
-  margin-top: -110px;
+  bottom: 18px;
+  width: 140px;
+  height: 140px;
+  margin-left: -70px;
   border: 2px solid rgba(182,255,122,0.55);
   border-radius: 50%;
   overflow: hidden;
-  background: #102030;
+  background: rgba(16, 32, 48, 0.78);
+  opacity: 0.92;
 }
 .flisym-hud .ai-horizon {
   position: absolute;
@@ -71,9 +71,9 @@ const HUD_CSS = `
   position: absolute;
   left: 50%;
   top: 50%;
-  width: 60px;
+  width: 40px;
   height: 2px;
-  margin-left: -30px;
+  margin-left: -20px;
   margin-top: -1px;
   background: #ffd23a;
   box-shadow: 0 0 4px rgba(0,0,0,0.8);
@@ -83,17 +83,17 @@ const HUD_CSS = `
   content: '';
   position: absolute;
   top: -1px;
-  width: 12px;
+  width: 8px;
   height: 4px;
   background: #ffd23a;
 }
-.flisym-hud .ai-center::before { left: -16px; }
-.flisym-hud .ai-center::after  { right: -16px; }
+.flisym-hud .ai-center::before { left: -10px; }
+.flisym-hud .ai-center::after  { right: -10px; }
 
 .flisym-hud .stall {
   position: absolute;
   left: 50%;
-  bottom: 60px;
+  bottom: 180px;
   transform: translateX(-50%);
   background: rgba(180,30,30,0.85);
   color: #fff;
@@ -209,6 +209,12 @@ export class HUD {
   private ilsWasActive = false;
   private approachAudioCtx: AudioContext | null = null;
   private approachAudioFailed = false;
+  // Browsers (Chrome / Safari) refuse to start an AudioContext until the user
+  // has interacted with the page. We listen once for the first gesture and
+  // unblock any deferred audio after that.
+  private userGestured = false;
+  // If a tone was requested before the first gesture, fire it on unlock.
+  private pendingTone = false;
 
   constructor() {
     this.injectStyle();
@@ -258,6 +264,25 @@ export class HUD {
 
     this.ils = new ILSIndicator();
     this.root.appendChild(this.ils.root);
+
+    // Listen ONCE for the first user gesture. After it fires, AudioContext
+    // creation is allowed by Chrome's autoplay policy.
+    const onFirstGesture = (): void => {
+      this.userGestured = true;
+      // If a tone was queued while we were locked, play it now.
+      if (this.pendingTone) {
+        this.pendingTone = false;
+        this.playApproachTone();
+      }
+      // Resume any context that was created suspended.
+      if (this.approachAudioCtx?.state === 'suspended') {
+        void this.approachAudioCtx.resume();
+      }
+      window.removeEventListener('keydown', onFirstGesture);
+      window.removeEventListener('pointerdown', onFirstGesture);
+    };
+    window.addEventListener('keydown', onFirstGesture, { once: false });
+    window.addEventListener('pointerdown', onFirstGesture, { once: false });
   }
 
   private q<T extends HTMLElement = HTMLSpanElement>(name: string): T {
@@ -333,6 +358,13 @@ export class HUD {
   /** One-shot 1200 Hz sine beep (200 ms, gain 0.05). Silently no-ops on failure. */
   private playApproachTone(): void {
     if (this.approachAudioFailed) return;
+    // Defer until the user has gestured — Chrome rejects AudioContext.start()
+    // before that and logs a noisy warning. Queue the tone so it fires on
+    // first interaction.
+    if (!this.userGestured) {
+      this.pendingTone = true;
+      return;
+    }
     try {
       let ctx = this.approachAudioCtx;
       if (!ctx) {
@@ -342,6 +374,7 @@ export class HUD {
         ctx = new C() as AudioContext;
         this.approachAudioCtx = ctx;
       }
+      if (ctx.state === 'suspended') void ctx.resume();
       const t = ctx.currentTime;
       const osc = ctx.createOscillator();
       osc.type = 'sine';

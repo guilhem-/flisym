@@ -15,6 +15,16 @@ import { CameraRig } from './camera/index.js';
 import { EngineSound } from './audio/engine.js';
 import { GateCourse } from './challenge/index.js';
 import { NetClient } from './net/index.js';
+import { checkWebGL, showWebGLUnavailableOverlay } from './webgl-check.js';
+
+// Bail out with a friendly overlay before constructing anything heavy if the
+// host can't give us a WebGL context (e.g. headless Chrome without
+// --use-angle=swiftshader, GPU blocklisted, no Mesa drivers).
+const webglProbe = checkWebGL();
+if (!webglProbe.ok) {
+  showWebGLUnavailableOverlay(webglProbe.reason ?? 'unknown');
+  throw new Error(`FLISYM: WebGL unavailable — ${webglProbe.reason ?? 'unknown'}`);
+}
 
 const scene = new THREE.Scene();
 // Fallback sky color so the canvas never reads pure black if the Sky shader
@@ -31,20 +41,76 @@ scene.add(aircraft.group);
 const course = new GateCourse();
 scene.add(course.mesh);
 
+// Spawn in flight at ~100 ft AGL above the runway threshold, on a +X heading
+// (runway alignment), trimmed for cruise speed. Cessna-172N cruise ≈ 110 kt
+// (≈ 56.6 m/s); pick 50 m/s as a comfortable hands-off speed slightly below
+// cruise so the user has margin both ways.
+const SPAWN_ALT_FT = 100;
+const SPAWN_ALT_M = SPAWN_ALT_FT * 0.3048; // 30.48 m
+const SPAWN_SPEED_MS = 50;                 // ≈ 97 kt — well above stall
+const SPAWN_THROTTLE = 0.7;                // cruise-ish throttle
+
 const state = createInitialState();
-state.x_W.set(-700, FLIGHT_MODEL.groundY, 0);
+state.x_W.set(-700, FLIGHT_MODEL.groundY + SPAWN_ALT_M, 0);
+state.v_W.set(SPAWN_SPEED_MS, 0, 0);       // body +X is forward → world +X here
+state.throttle = SPAWN_THROTTLE;
+state.onGround = false;
 
 const controls = createNeutralControls();
+controls.throttleCmd = SPAWN_THROTTLE;
 
+// Camera near/far chosen to keep the 24-bit depth buffer usable.
+//   near=2 / far=30_000 → 15,000:1 ratio. Was 0.5/60_000 = 120,000:1 which
+//   caused obvious z-fighting on distant terrain. With FogExp2 density
+//   0.00012 and a fade to ~99% by 30 km, the old 60 km far plane was
+//   wasted depth precision the user couldn't see anyway.
 const camera = new THREE.PerspectiveCamera(
   60,
   window.innerWidth / window.innerHeight,
-  0.5,
-  60_000,
+  2,
+  30_000,
 );
 
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+// Detect software WebGL (SwiftShader, llvmpipe). On software rasterizers
+// MSAA + 2× pixel ratio is the difference between 60 fps and 6 fps, so we
+// skip both. Hardware GPUs get the full quality path.
+let isSoftwareRenderer = false;
+const probeCanvas = document.createElement('canvas');
+const probeGL =
+  (probeCanvas.getContext('webgl2') as WebGL2RenderingContext | null) ??
+  (probeCanvas.getContext('webgl') as WebGLRenderingContext | null);
+if (probeGL !== null) {
+  const dbg = probeGL.getExtension('WEBGL_debug_renderer_info');
+  const rendererStr = dbg
+    ? String(probeGL.getParameter(dbg.UNMASKED_RENDERER_WEBGL))
+    : '';
+  isSoftwareRenderer = /SwiftShader|llvmpipe|Software|Microsoft Basic|swrast/i.test(
+    rendererStr,
+  );
+}
+
+// Even though checkWebGL() succeeded above, the WebGLRenderer constructor can
+// still throw on edge cases (e.g. context lost mid-init). Catch and surface.
+let renderer: THREE.WebGLRenderer;
+try {
+  renderer = new THREE.WebGLRenderer({
+    // antialias and pixelRatio>1 are fine on real GPUs but cripple software
+    // rasterizers — skip both when we know we're on one.
+    antialias: !isSoftwareRenderer,
+    powerPreference: 'high-performance',
+    // logarithmicDepthBuffer trades a small per-fragment cost for vastly
+    // better depth precision over 30 km of terrain. Eliminates the residual
+    // z-fighting on the runway-vs-terrain seam at long distances.
+    logarithmicDepthBuffer: true,
+  });
+} catch (e) {
+  const msg = e instanceof Error ? e.message : String(e);
+  showWebGLUnavailableOverlay(`WebGLRenderer threw: ${msg}`);
+  throw e;
+}
+// Cap pixel ratio at 1 on software WebGL (saves 4× fragment work on retina).
+// On hardware GPUs allow up to 2× for crispness without going further.
+renderer.setPixelRatio(isSoftwareRenderer ? 1 : Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
 
@@ -137,6 +203,43 @@ function syncAircraftToState(): void {
 }
 
 const clock = new THREE.Clock();
+let renderVerified = false;
+let renderVerifyAttempts = 0;
+
+/**
+ * Post-render sanity check: after the first few frames, sample the framebuffer
+ * center pixel. If it's all-black despite `scene.background` being a non-black
+ * color, the renderer constructed a context but isn't actually drawing —
+ * Chromium's deprecated software-WebGL fallback, headless GPU process failure,
+ * or similar. Show the overlay so the user sees a real signal.
+ */
+function verifyRenderOnce(): void {
+  if (renderVerified) return;
+  renderVerifyAttempts += 1;
+  // Wait a couple of frames for the camera snap and clear buffers to settle.
+  if (renderVerifyAttempts < 3) return;
+  try {
+    const gl = renderer.getContext();
+    const px = new Uint8Array(4);
+    const cx = Math.floor(renderer.domElement.width / 2);
+    const cy = Math.floor(renderer.domElement.height / 2);
+    gl.readPixels(cx, cy, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    const total = (px[0] ?? 0) + (px[1] ?? 0) + (px[2] ?? 0);
+    if (total === 0) {
+      // Pure black despite scene.background = horizon blue → renderer can't
+      // actually paint. Surface to user.
+      showWebGLUnavailableOverlay(
+        `Renderer produced black frame after ${renderVerifyAttempts} attempts (center pixel [0,0,0]). The WebGL context exists but isn't drawing — most likely Chromium's deprecated software-WebGL fallback. Try --use-angle=swiftshader --enable-unsafe-swiftshader.`,
+      );
+    }
+    renderVerified = true;
+  } catch {
+    // readPixels on the default framebuffer can fail silently in some hosts.
+    // If we can't probe, give up gracefully — the overlay won't fire.
+    renderVerified = true;
+  }
+}
+
 function animate(): void {
   const dt = Math.min(clock.getDelta(), 0.1);
   input.update(dt, controls);
@@ -173,6 +276,7 @@ function animate(): void {
   net.update(state, dt);
 
   renderer.render(scene, camera);
+  verifyRenderOnce();
   requestAnimationFrame(animate);
 }
 

@@ -13,6 +13,19 @@ const COMMAND_CENTER_RATE = 3.0; // /s — how fast cmd relaxes to 0 on release
 
 const FLAP_DETENTS = [0, 0.5, 1] as const;
 
+// Keys we own and must not let the browser act on (scroll, etc.).
+const GAME_KEYS = new Set<string>([
+  'arrowup',
+  'arrowdown',
+  'arrowleft',
+  'arrowright',
+  ' ', // space — could trigger page scroll
+  'pageup',
+  'pagedown',
+  'home',
+  'end',
+]);
+
 function clamp(x: number, lo: number, hi: number): number {
   if (x < lo) return lo;
   if (x > hi) return hi;
@@ -63,6 +76,11 @@ export class KeyboardInput {
     // Normalize to a stable lowercase key id (e.g. "w", "arrowup", "shift").
     const k = e.key.toLowerCase();
 
+    // Suppress the browser's default action for game-relevant keys: arrow
+    // keys would otherwise scroll the page (or the canvas / focused element)
+    // and we'd never see the held-state for pitch/roll input.
+    if (GAME_KEYS.has(k)) e.preventDefault();
+
     // Discrete actions trigger only on the leading edge (no autorepeat).
     if (!e.repeat) {
       if (k === 'f') {
@@ -83,7 +101,9 @@ export class KeyboardInput {
   }
 
   private onKeyUp(e: KeyboardEvent): void {
-    this.pressed.delete(e.key.toLowerCase());
+    const k = e.key.toLowerCase();
+    if (GAME_KEYS.has(k)) e.preventDefault();
+    this.pressed.delete(k);
   }
 
   private pendingBrakeToggle = false;
@@ -147,9 +167,10 @@ export class KeyboardInput {
       COMMAND_CENTER_RATE,
     );
 
-    // --- Throttle: Shift = +0.5/s, Ctrl = -0.5/s. Clamp [0,1]. No self-center.
-    if (held('shift')) controls.throttleCmd += 0.5 * dt;
-    if (held('control')) controls.throttleCmd -= 0.5 * dt;
+    // --- Throttle: Shift / PageUp = +0.5/s, Ctrl / PageDown = -0.5/s.
+    //     Clamp [0,1]. No self-center.
+    if (held('shift') || held('pageup')) controls.throttleCmd += 0.5 * dt;
+    if (held('control') || held('pagedown')) controls.throttleCmd -= 0.5 * dt;
     controls.throttleCmd = clamp(controls.throttleCmd, 0, 1);
 
     // --- Flaps: discrete detents driven by keydown handler.

@@ -67,6 +67,13 @@ export class Runway {
       roughness: r.roughness,
       metalness: 0.0,
       flatShading: false,
+      // Polygon offset pulls the runway slightly forward in depth so the
+      // 0.5 m height gap from the underlying terrain stays unambiguous even
+      // at long viewing distance / steep grazing angles. Without this the
+      // runway flickers against the terrain plane on distant approaches.
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
     });
 
     this.mesh = new THREE.Mesh(geometry, material);

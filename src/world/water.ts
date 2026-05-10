@@ -20,6 +20,13 @@ export class Water {
       color: new THREE.Color(cfg.color),
       roughness: cfg.roughness,
       metalness: cfg.metalness,
+      // Water sits at y = -0.05 m, 0.55 m below the runway and well below
+      // the runway-flatten plane (y=0). At grazing angles the depth-buffer
+      // slop can still let it punch through. Push it slightly back so the
+      // terrain wins ties.
+      polygonOffset: true,
+      polygonOffsetFactor: 1,
+      polygonOffsetUnits: 1,
     });
 
     this.mesh = new THREE.Mesh(geometry, material);

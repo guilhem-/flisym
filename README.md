@@ -11,6 +11,23 @@ npm run dev
 
 Then open the URL printed by Vite (typically http://127.0.0.1:5173).
 
+### Running on a VM / no-GPU host (VMware vmsvga, VirtualBox, headless Linux)
+
+Most VMs have WebGL on Chromium's GPU blocklist. Use the launch helper:
+
+```bash
+./scripts/launch-browser.sh
+```
+
+It wraps Chromium with `--use-angle=swiftshader --enable-unsafe-swiftshader
+--ignore-gpu-blocklist --enable-features=Vulkan` (software rasterized but
+ES3-capable, which Three.js requires). Falls back to Firefox with
+`MOZ_WEBRENDER=0` if Chromium isn't installed.
+
+If the page still shows the "WebGL is unavailable" overlay, check
+`chrome://gpu` (or `about:support` in Firefox) and follow the on-overlay
+instructions.
+
 If everything is wired up, you should see a slowly spinning teal cube on a
 dark background — that is the toolchain proof.
 
