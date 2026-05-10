@@ -1,83 +1,87 @@
-# Current State — v0.2 in flight
+# Current State — v0.2 Wave B
 
-**Phase**: 7 — v0.2 Wave A (Design) dispatching
-**Last update**: 2026-05-11 (session restart, post-pause)
-**v0.1 baseline**: tag `v0.1` at `67f13d2` (28 tests). HEAD checkpoint `91ea520` + hardening (71 tests passing).
-**Time elapsed (this v0.2 session)**: ~5 min orientation + scaffold refresh
-**Time budget for v0.2 session**: 8h hard stop, scope cut at 6h
+**Phase**: 7 — v0.2 Wave B (Foundation coders) dispatching
+**Last update**: 2026-05-11 (post Wave A)
+**v0.1 baseline**: tag `v0.1` at `67f13d2`
+**Tests**: 71/71 green at Wave B dispatch (unchanged — Wave A was docs-only)
+**Time elapsed in v0.2 session**: ~40 min (Wave A design + materialization)
+**Remaining budget**: ~7h 20min before 8h cap
 
 ## NEXT ACTION (read this first if resuming)
 
-**You are mid-dispatch of Wave A.** Four design agents are about to be (or have been) dispatched in parallel:
+**Wave A is complete.** All 8 design docs landed under `docs/` (5 mode docs + combat + ai + test-strategy). Reports at `AGENTS/<role>-report.md`.
 
-1. `modes-designer` (Plan) → writes `docs/modes/{free-flight,time-trial,dogfight,strike-mission}.md`
-2. `combat-designer` (Plan) → writes `docs/combat-spec.md`
-3. `ai-designer` (Plan) → writes `docs/ai-spec.md`
-4. `test-strategy-designer` (Plan) → writes `docs/test-strategy.md`
+**Wave B is dispatching now — 4 parallel coders:**
 
-Briefs at `AGENTS/modes-designer.md`, `AGENTS/combat-designer.md`, `AGENTS/ai-designer.md`, `AGENTS/test-strategy-designer.md`.
+1. `modes-coder` (general-purpose) → `src/modes/` + 5-line edit to `src/challenge/gates.ts`. Implements Free Flight + Time Trial. Leaves Dogfight/Strike registry slots as throw-stubs.
+2. `combat-coder` (general-purpose) → `src/combat/` + additive `src/physics/state.ts` edit + `src/physics/controls.ts` + `src/physics/aero.ts` + `server/index.ts` relay extension + `src/net/client.ts` emitter.
+3. `ai-coder` (general-purpose) → `src/ai/` only.
+4. `world-extender` (general-purpose) → `src/world/ground-targets.ts` + `src/world/collision.ts` if needed.
 
-When Wave A reports return:
-- Read all 4 reports at `AGENTS/<role>-report.md`.
-- Verify deliverable files exist under `docs/`.
-- If reports flag missing primitives (e.g., a physics helper), open an issue row in this file before moving to Wave B.
-- Append a LOG.md entry "Wave A complete — N min".
-- Update this file's NEXT ACTION block to point at Wave B.
-- Then dispatch Wave B (briefs to be written when Wave A reports land).
+Briefs at `AGENTS/{modes,combat,ai,world-extender}-coder.md` (modes/combat/ai use `-coder` suffix, world uses `-extender`).
+
+**Files-touched whitelist — verified no overlap.** All four can run in parallel.
+
+When Wave B reports return:
+- `npm test` and `npx tsc --noEmit` must both stay green. Producer runs these.
+- If any agent's report flags a blocker, surface it in this file before Wave C.
+- Append LOG.md entry "Wave B complete — N min".
+- Update NEXT ACTION → Wave C.
 
 ## Waves overview (full plan in `PRODUCER-v2.md`)
 
 | Wave | Status | Agents | Budget |
 |------|--------|--------|--------|
-| A — Design | **dispatching** | modes/combat/ai/test-strategy designers | 30 min |
-| B — Foundation | pending | modes/combat/ai/world-extender coders | 90 min |
-| C — Integration | pending | hud-combat / mp-combat / mission coders | 75 min |
+| A — Design | **complete** | 4 designers | used ~40 min (overran on file materialization) |
+| B — Foundation | **dispatching** | modes/combat/ai/world-extender | 90 min target |
+| C — Integration | pending | hud-combat / mp-combat / mission-coder | 75 min |
 | D — Tests | pending | axis / combat-ai / e2e+budget | 75 min |
 | E — Final | pending | reviewer-v2 → polish-v2 | 60 min |
 
 ## Hard constraints every agent must obey
 
-- Body axes: **+X forward, +Y up, +Z right.** Never silently flip. See `docs/physics-spec.md`.
+- Body axes: **+X forward, +Y up, +Z right.** See `docs/physics-spec.md`.
 - TypeScript strict-mode clean (`npx tsc --noEmit`).
 - `npm test` must stay green at every wave end.
-- No new runtime dependencies without producer approval (dev deps like Playwright OK if needed).
+- No new runtime dependencies (dev deps like `@playwright/test` OK with producer approval — see test-strategy.md §3.1).
 - Never regress v0.1: `git checkout v0.1 && npm test` must remain valid.
-- Reuse existing primitives: `createInitialState`, `KeyboardInput`, `HUD`, `World`, `Aircraft`, `NetClient`, `CameraRig`.
+- Reuse existing primitives.
 
-## Open issues (carry-over from v0.1 punchlist — fix opportunistically)
+## Wave A artifacts (use these — they're authoritative)
 
-- **P1** `src/physics/step.ts` ground clamp falls back to `groundY = 0.5` when `getGroundHeight` returns `<= 0`. Should only fall back on NaN/Inf.
-- **P3** `CameraRig` has no `dispose()` / event-listener cleanup.
+| Path | Contents |
+|------|----------|
+| `docs/modes/_mode-interface.md` | `Mode` interface, lifecycle, frame conventions |
+| `docs/modes/free-flight.md` | Free Flight spec |
+| `docs/modes/time-trial.md` | Time Trial spec (ghost replay, localStorage) |
+| `docs/modes/dogfight.md` | Dogfight spec (Wave C will implement) |
+| `docs/modes/strike-mission.md` | Strike Mission spec (Wave C will implement) |
+| `docs/combat-spec.md` | Combat full spec + `COMBAT_TUNING` |
+| `docs/ai-spec.md` | AI spec + `AI_TUNING` presets + 16 test scenarios |
+| `docs/test-strategy.md` | Test strategy (Wave D contract) |
+
+## Open issues (carry-over from v0.1)
+
+- **P1** `src/physics/step.ts` ground clamp falls back to `groundY = 0.5` when `getGroundHeight` returns `<= 0`. Should fall back only on NaN/Inf.
+- **P3** `CameraRig` has no `dispose()`.
 - **P4** Wind sampler reads `state.time` one substep late.
 - **P5** Free-fly mode resets roll on entry.
 
 ## How to run / verify
 
 ```sh
-npm install          # already done
-npm test             # vitest — must be 71+ green
-npx tsc --noEmit     # typecheck
-npm run build        # produces dist/
-npm run dev          # http://localhost:5173
-npm run server       # ws relay on :3030 (optional)
+npm test
+npx tsc --noEmit
+npm run build
 ```
 
-For v0.2 release-gate (after Wave D):
-- `npx vitest run tests/physics-axis-correctness.test.ts`
-- `npx vitest run tests/graphics-budget.test.ts`
-- `npx playwright test` (or documented skip)
+After Wave D, the release-gate adds:
+```sh
+npx vitest run tests/physics-axis-correctness.test.ts
+npx vitest run tests/graphics-budget.test.ts
+npx playwright test                  # or skip with documented reason
+```
 
-## Producer scaffolding (do not delete)
+## Producer scaffolding (unchanged)
 
-| File | Purpose |
-|------|---------|
-| `RESUME.md` | Entry pointer for fresh sessions |
-| `PRODUCER.md` | v0.1 vision (frozen) |
-| `PRODUCER-v2.md` | v0.2 plan (this release) |
-| `STATE.md` | **this file** — restart-safe state |
-| `LOG.md` | Append-only decision log |
-| `SHIPPED.md` | v0.1 feature list (frozen) |
-| `REVIEW_PUNCHLIST.md` | v0.1 reviewer's open items |
-| `AGENTS/ROSTER.md` | Dispatch ledger |
-| `AGENTS/<role>.md` | Per-agent brief (re-dispatchable) |
-| `AGENTS/<role>-report.md` | Per-agent run report |
+See `RESUME.md` for the canonical pointer order; see `AGENTS/ROSTER.md` for the dispatch ledger.
