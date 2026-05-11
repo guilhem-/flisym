@@ -17,3 +17,5 @@ export type { ModeId } from './registry.js';
 export { ModeSwitcher } from './switcher.js';
 export { FreeFlightMode } from './free-flight.js';
 export { TimeTrialMode } from './time-trial.js';
+export { DogfightMode } from './dogfight.js';
+export { StrikeMissionMode } from './strike-mission.js';

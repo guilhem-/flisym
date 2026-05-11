@@ -92,6 +92,14 @@ wss.on('connection', (socket) => {
       broadcast(id, { ...m, type: `peer-${t}`, id });
       return;
     }
+
+    // v0.2 bot lifecycle relay (ai-spec §8.1). The host emits these so other
+    // clients can mirror bot retirement / join without simulating AI.
+    if (t === 'bot-retire' || t === 'bot-join') {
+      const m = msg as Record<string, unknown>;
+      broadcast(id, { ...m, type: `peer-${t}`, id });
+      return;
+    }
   });
 
   const onClose = (): void => {

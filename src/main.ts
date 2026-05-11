@@ -13,22 +13,48 @@ import { KeyboardInput } from './input/index.js';
 import { HUD } from './hud/index.js';
 import { CameraRig } from './camera/index.js';
 import { EngineSound } from './audio/engine.js';
-import { GateCourse } from './challenge/index.js';
 import { NetClient } from './net/index.js';
 import { checkWebGL, showWebGLUnavailableOverlay } from './webgl-check.js';
+import {
+  ModeSwitcher,
+  getDefaultModeId,
+  type ModeContext,
+  type ModeId,
+  type ModeTelemetryEvent,
+} from './modes/index.js';
+import { seedRNG } from './ai/index.js';
+
+const FLISYM_GLOBALS = globalThis as typeof globalThis & {
+  __FLISYM_READY__?: boolean;
+  __FLISYM_WEBGL_OK__?: boolean;
+  __FLISYM_FRAMES__?: number;
+};
+FLISYM_GLOBALS.__FLISYM_READY__ = false;
+FLISYM_GLOBALS.__FLISYM_WEBGL_OK__ = false;
+FLISYM_GLOBALS.__FLISYM_FRAMES__ = 0;
 
 // Bail out with a friendly overlay before constructing anything heavy if the
-// host can't give us a WebGL context (e.g. headless Chrome without
-// --use-angle=swiftshader, GPU blocklisted, no Mesa drivers).
+// host can't give us a WebGL context.
 const webglProbe = checkWebGL();
 if (!webglProbe.ok) {
   showWebGLUnavailableOverlay(webglProbe.reason ?? 'unknown');
   throw new Error(`FLISYM: WebGL unavailable — ${webglProbe.reason ?? 'unknown'}`);
 }
+FLISYM_GLOBALS.__FLISYM_WEBGL_OK__ = true;
+
+// --- ?seed= and ?mode= URL params ----------------------------------------
+const urlParams = new URLSearchParams(window.location.search);
+const seedParam = urlParams.get('seed');
+const SESSION_SEED = (() => {
+  if (seedParam != null) {
+    const n = Number(seedParam);
+    if (Number.isFinite(n)) return Math.floor(n) | 0;
+  }
+  return Date.now() & 0xffffffff;
+})();
+seedRNG(SESSION_SEED);
 
 const scene = new THREE.Scene();
-// Fallback sky color so the canvas never reads pure black if the Sky shader
-// fails to draw on a given frame (e.g. before the first sun position is set).
 scene.background = new THREE.Color(0x87b6e8);
 
 const world = new World();
@@ -38,32 +64,21 @@ scene.fog = world.fog;
 const aircraft = new Aircraft();
 scene.add(aircraft.group);
 
-const course = new GateCourse();
-scene.add(course.mesh);
-
-// Spawn in flight at ~100 ft AGL above the runway threshold, on a +X heading
-// (runway alignment), trimmed for cruise speed. Cessna-172N cruise ≈ 110 kt
-// (≈ 56.6 m/s); pick 50 m/s as a comfortable hands-off speed slightly below
-// cruise so the user has margin both ways.
+// Spawn 100 ft AGL above the runway threshold, heading east at cruise.
 const SPAWN_ALT_FT = 100;
-const SPAWN_ALT_M = SPAWN_ALT_FT * 0.3048; // 30.48 m
-const SPAWN_SPEED_MS = 50;                 // ≈ 97 kt — well above stall
-const SPAWN_THROTTLE = 0.7;                // cruise-ish throttle
+const SPAWN_ALT_M = SPAWN_ALT_FT * 0.3048;
+const SPAWN_SPEED_MS = 50;
+const SPAWN_THROTTLE = 0.7;
 
 const state = createInitialState();
 state.x_W.set(-700, FLIGHT_MODEL.groundY + SPAWN_ALT_M, 0);
-state.v_W.set(SPAWN_SPEED_MS, 0, 0);       // body +X is forward → world +X here
+state.v_W.set(SPAWN_SPEED_MS, 0, 0);
 state.throttle = SPAWN_THROTTLE;
 state.onGround = false;
 
 const controls = createNeutralControls();
 controls.throttleCmd = SPAWN_THROTTLE;
 
-// Camera near/far chosen to keep the 24-bit depth buffer usable.
-//   near=2 / far=30_000 → 15,000:1 ratio. Was 0.5/60_000 = 120,000:1 which
-//   caused obvious z-fighting on distant terrain. With FogExp2 density
-//   0.00012 and a fade to ~99% by 30 km, the old 60 km far plane was
-//   wasted depth precision the user couldn't see anyway.
 const camera = new THREE.PerspectiveCamera(
   60,
   window.innerWidth / window.innerHeight,
@@ -71,9 +86,7 @@ const camera = new THREE.PerspectiveCamera(
   30_000,
 );
 
-// Detect software WebGL (SwiftShader, llvmpipe). On software rasterizers
-// MSAA + 2× pixel ratio is the difference between 60 fps and 6 fps, so we
-// skip both. Hardware GPUs get the full quality path.
+// Detect software WebGL (SwiftShader, llvmpipe).
 let isSoftwareRenderer = false;
 const probeCanvas = document.createElement('canvas');
 const probeGL =
@@ -89,18 +102,11 @@ if (probeGL !== null) {
   );
 }
 
-// Even though checkWebGL() succeeded above, the WebGLRenderer constructor can
-// still throw on edge cases (e.g. context lost mid-init). Catch and surface.
 let renderer: THREE.WebGLRenderer;
 try {
   renderer = new THREE.WebGLRenderer({
-    // antialias and pixelRatio>1 are fine on real GPUs but cripple software
-    // rasterizers — skip both when we know we're on one.
     antialias: !isSoftwareRenderer,
     powerPreference: 'high-performance',
-    // logarithmicDepthBuffer trades a small per-fragment cost for vastly
-    // better depth precision over 30 km of terrain. Eliminates the residual
-    // z-fighting on the runway-vs-terrain seam at long distances.
     logarithmicDepthBuffer: true,
   });
 } catch (e) {
@@ -108,10 +114,9 @@ try {
   showWebGLUnavailableOverlay(`WebGLRenderer threw: ${msg}`);
   throw e;
 }
-// Cap pixel ratio at 1 on software WebGL (saves 4× fragment work on retina).
-// On hardware GPUs allow up to 2× for crispness without going further.
 renderer.setPixelRatio(isSoftwareRenderer ? 1 : Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.domElement.setAttribute('data-testid', 'flisym-canvas');
 document.body.appendChild(renderer.domElement);
 
 window.addEventListener('resize', () => {
@@ -136,11 +141,8 @@ const aircraftVelocity = new THREE.Vector3();
 const RPM_IDLE = 700;
 const RPM_FULL = 2400;
 
-// --- Wind layer ----------------------------------------------------------
-// Hand the physics step a sampler so it can compute air-relative velocity.
 setWindFn((altitude, time) => getWind(altitude, time));
 
-// --- Engine sound (lazy-start on first user gesture) ---------------------
 const engineSound = new EngineSound();
 window.addEventListener(
   'keydown',
@@ -150,10 +152,6 @@ window.addEventListener(
   { once: true },
 );
 
-// --- Time-of-day clock ---------------------------------------------------
-// `worldClock` in hours (0..24). Per the brief: speed = 1.0 → 1 in-game
-// second per real second. One in-game second = 1/3600 hour, so we advance
-// `worldClock` by `dt * TIME_SPEED_HOURS_PER_SEC`.
 let worldClock = 14.0;
 const TIME_SPEED_HOURS_PER_SEC = 1.0 / 3600;
 window.addEventListener('time:set', (e: Event) => {
@@ -163,9 +161,7 @@ window.addEventListener('time:set', (e: Event) => {
   }
 });
 
-// --- Multiplayer presence (lazy connect) ---------------------------------
-// Press M once to connect to the presence server. URL can be overridden via
-// `VITE_FLISYM_WS_URL` at build time; defaults to localhost:3030.
+// --- Multiplayer presence (lazy connect; M key) --------------------------
 const net = new NetClient();
 scene.add(net.getRoot());
 const wsUrl =
@@ -182,12 +178,52 @@ const onMKey = (e: KeyboardEvent): void => {
 };
 window.addEventListener('keydown', onMKey);
 
-// Challenge: track whether the finish overlay has been shown for this run.
-let finishShown = false;
-window.addEventListener('challenge:reset', () => {
-  course.reset();
-  hud.hideFinishOverlay();
-  finishShown = false;
+// --- Mode lifecycle ------------------------------------------------------
+function emitTelemetry(event: ModeTelemetryEvent): void {
+  if (import.meta.env.DEV) {
+    // Lightweight per-event log so debugging modes is observable.
+    // eslint-disable-next-line no-console
+    console.debug('[mode]', event);
+  }
+}
+
+const modeCtx: ModeContext = {
+  scene,
+  world,
+  hud,
+  cameraRig,
+  input,
+  playerState: state,
+  playerControls: controls,
+  net,
+  seed: SESSION_SEED,
+  emit: emitTelemetry,
+};
+
+const switcher = new ModeSwitcher(modeCtx);
+switcher.setMode(getDefaultModeId());
+hud.setMode(switcher.status());
+
+// Mode hotkeys 1..4 (only when not over a focused input). Reserved by
+// docs/test-strategy.md §3.2 so Playwright can switch via keyboard.
+const MODE_HOTKEYS: Record<string, ModeId> = {
+  '1': 'free-flight',
+  '2': 'time-trial',
+  '3': 'dogfight',
+  '4': 'strike-mission',
+};
+window.addEventListener('keydown', (e: KeyboardEvent) => {
+  if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+  const next = MODE_HOTKEYS[e.key];
+  if (!next) return;
+  if (switcher.getCurrent()?.meta.id === next) return;
+  try {
+    switcher.setMode(next);
+    hud.setMode(switcher.status());
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`[mode] failed to switch to ${next}:`, err);
+  }
 });
 
 function syncAircraftToState(): void {
@@ -206,17 +242,9 @@ const clock = new THREE.Clock();
 let renderVerified = false;
 let renderVerifyAttempts = 0;
 
-/**
- * Post-render sanity check: after the first few frames, sample the framebuffer
- * center pixel. If it's all-black despite `scene.background` being a non-black
- * color, the renderer constructed a context but isn't actually drawing —
- * Chromium's deprecated software-WebGL fallback, headless GPU process failure,
- * or similar. Show the overlay so the user sees a real signal.
- */
 function verifyRenderOnce(): void {
   if (renderVerified) return;
   renderVerifyAttempts += 1;
-  // Wait a couple of frames for the camera snap and clear buffers to settle.
   if (renderVerifyAttempts < 3) return;
   try {
     const gl = renderer.getContext();
@@ -226,16 +254,12 @@ function verifyRenderOnce(): void {
     gl.readPixels(cx, cy, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
     const total = (px[0] ?? 0) + (px[1] ?? 0) + (px[2] ?? 0);
     if (total === 0) {
-      // Pure black despite scene.background = horizon blue → renderer can't
-      // actually paint. Surface to user.
       showWebGLUnavailableOverlay(
         `Renderer produced black frame after ${renderVerifyAttempts} attempts (center pixel [0,0,0]). The WebGL context exists but isn't drawing — most likely Chromium's deprecated software-WebGL fallback. Try --use-angle=swiftshader --enable-unsafe-swiftshader.`,
       );
     }
     renderVerified = true;
   } catch {
-    // readPixels on the default framebuffer can fail silently in some hosts.
-    // If we can't probe, give up gracefully — the overlay won't fire.
     renderVerified = true;
   }
 }
@@ -244,25 +268,20 @@ function animate(): void {
   const dt = Math.min(clock.getDelta(), 0.1);
   input.update(dt, controls);
   advance(state, dt, controls, getGroundHeight);
-  hud.update(state);
 
-  // Challenge gate course: tick logic and surface state to HUD.
-  const gs = course.update(state.x_W, state.v_W, dt);
-  hud.setChallenge(gs);
-  if (gs.finished && !finishShown) {
-    hud.showFinishOverlay(gs.courseTime, gs.missed);
-    finishShown = true;
-  }
+  // Mode tick happens after physics so modes (Time Trial, Dogfight, Strike)
+  // see fresh state. Mode also drives its own HUD pushes.
+  switcher.update(dt);
+  hud.update(state);
+  hud.setMode(switcher.status());
 
   syncAircraftToState();
   aircraft.update(dt);
 
-  // Advance world clock and drive the sun/sky/fog tint each frame.
   worldClock = (worldClock + dt * TIME_SPEED_HOURS_PER_SEC) % 24;
   world.setTimeOfDay(worldClock);
   world.update(dt);
 
-  // Engine audio follows propeller RPM and stall flag.
   engineSound.update(
     state.throttle,
     RPM_IDLE + (RPM_FULL - RPM_IDLE) * state.throttle,
@@ -272,17 +291,20 @@ function animate(): void {
   aircraftVelocity.copy(state.v_W);
   cameraRig.update(dt, aircraft.group, aircraftVelocity);
 
-  // Multiplayer: send our state at 30 Hz and lerp peer aircraft each frame.
   net.update(state, dt);
 
   renderer.render(scene, camera);
   verifyRenderOnce();
+
+  FLISYM_GLOBALS.__FLISYM_FRAMES__ = (FLISYM_GLOBALS.__FLISYM_FRAMES__ ?? 0) + 1;
+  if (!FLISYM_GLOBALS.__FLISYM_READY__) FLISYM_GLOBALS.__FLISYM_READY__ = true;
+
   requestAnimationFrame(animate);
 }
 
 animate();
 
-// Expose for debugging/HUD/Camera modules to wire into.
+// --- Debug surface --------------------------------------------------------
 declare global {
   // eslint-disable-next-line no-var
   var FLISYM: {
@@ -293,6 +315,62 @@ declare global {
     camera: THREE.PerspectiveCamera;
     cameraRig: CameraRig;
     scene: THREE.Scene;
+    switcher: ModeSwitcher;
+    seed: number;
+    scenario?: {
+      dogfightTrainer: () => void;
+      timeTrialTrainer: () => void;
+      reset: () => void;
+    };
   };
 }
-globalThis.FLISYM = { state, controls, aircraft, world, camera, cameraRig, scene };
+
+const baseDebug = {
+  state,
+  controls,
+  aircraft,
+  world,
+  camera,
+  cameraRig,
+  scene,
+  switcher,
+  seed: SESSION_SEED,
+};
+
+if (import.meta.env.DEV) {
+  // Dev-only scenario trainers used by Playwright specs (docs/test-strategy.md §3.2).
+  globalThis.FLISYM = {
+    ...baseDebug,
+    scenario: {
+      dogfightTrainer(): void {
+        switcher.setMode('dogfight');
+        hud.setMode(switcher.status());
+        // Bring the bot in close so a Playwright pulse-fire reliably scores.
+        state.x_W.set(0, 600, 0);
+        state.v_W.set(50, 0, 0);
+        state.q.identity();
+        state.throttle = 0.9;
+      },
+      timeTrialTrainer(): void {
+        switcher.setMode('time-trial');
+        hud.setMode(switcher.status());
+        // Position slightly before gate 0 with cruise velocity so the player
+        // crosses on the next few frames with no input required.
+        state.x_W.set(-200, FLIGHT_MODEL.groundY + 60, 0);
+        state.v_W.set(60, 0, 0);
+        state.q.identity();
+        state.throttle = 0.8;
+      },
+      reset(): void {
+        switcher.setMode(getDefaultModeId());
+        hud.setMode(switcher.status());
+        state.x_W.set(-700, FLIGHT_MODEL.groundY + SPAWN_ALT_M, 0);
+        state.v_W.set(SPAWN_SPEED_MS, 0, 0);
+        state.q.identity();
+        state.throttle = SPAWN_THROTTLE;
+      },
+    },
+  };
+} else {
+  globalThis.FLISYM = baseDebug;
+}

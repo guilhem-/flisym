@@ -162,15 +162,16 @@ describe('MODE_REGISTRY', () => {
     expect(ids).toEqual(['dogfight', 'free-flight', 'strike-mission', 'time-trial']);
   });
 
-  test('free-flight + time-trial factories construct, dogfight + strike throw', () => {
+  test('all four factories construct fresh Mode instances', () => {
     const ff = MODE_REGISTRY.get('free-flight');
     const tt = MODE_REGISTRY.get('time-trial');
     const df = MODE_REGISTRY.get('dogfight');
     const sm = MODE_REGISTRY.get('strike-mission');
     expect(ff?.()).toBeInstanceOf(FreeFlightMode);
     expect(tt?.()).toBeInstanceOf(TimeTrialMode);
-    expect(() => df?.()).toThrow(/dogfight not implemented/);
-    expect(() => sm?.()).toThrow(/strike-mission not implemented/);
+    // Wave C wires up the Dogfight + Strike Mission factories.
+    expect(df?.()).toBeDefined();
+    expect(sm?.()).toBeDefined();
   });
 
   test('getDefaultModeId reads ?mode= and falls back to free-flight', () => {

@@ -3,32 +3,20 @@
 // Maps stable mode ids to zero-arg factories that return a fresh `Mode`
 // instance. `getDefaultModeId()` inspects `location.search` for `?mode=<id>`
 // and falls back to `'free-flight'` when the URL is absent or invalid.
-//
-// Dogfight and Strike Mission land in Wave C — their slots are present so
-// the registry contract is stable, but invoking the factory throws so any
-// accidental wiring fails loudly instead of silently booting nothing.
 
 import type { Mode, ModeMeta } from './types.js';
 import { FreeFlightMode } from './free-flight.js';
 import { TimeTrialMode } from './time-trial.js';
+import { DogfightMode } from './dogfight.js';
+import { StrikeMissionMode } from './strike-mission.js';
 
 export type ModeId = ModeMeta['id'];
 
 export const MODE_REGISTRY: ReadonlyMap<ModeId, () => Mode> = new Map<ModeId, () => Mode>([
   ['free-flight', () => new FreeFlightMode()],
   ['time-trial', () => new TimeTrialMode()],
-  [
-    'dogfight',
-    (): Mode => {
-      throw new Error('dogfight not implemented yet');
-    },
-  ],
-  [
-    'strike-mission',
-    (): Mode => {
-      throw new Error('strike-mission not implemented yet');
-    },
-  ],
+  ['dogfight', () => new DogfightMode()],
+  ['strike-mission', () => new StrikeMissionMode()],
 ]);
 
 const VALID_IDS: ReadonlySet<string> = new Set<string>([

@@ -76,12 +76,36 @@ export interface PeerRespawnMsg {
   t: number;
 }
 
+/**
+ * v0.2 AI bot lifecycle envelopes (ai-spec §8.1 + mp-combat). The host (the
+ * peer running the bots) emits these so other clients can mirror bot
+ * retirement / join without simulating AI themselves.
+ */
+export interface PeerBotRetireMsg {
+  type: 'peer-bot-retire';
+  /** Sender (host) id. */
+  id: string;
+  botId: string;
+  t: number;
+}
+export interface PeerBotJoinMsg {
+  type: 'peer-bot-join';
+  /** Sender (host) id. */
+  id: string;
+  botId: string;
+  t: number;
+  x: [number, number, number];
+  q: [number, number, number, number];
+}
+
 /** Map of event name → payload type. Drives the typed emitter. */
 export interface NetEvents {
   'peer-shoot': PeerShootMsg;
   'peer-hit': PeerHitMsg;
   'peer-kill': PeerKillMsg;
   'peer-respawn': PeerRespawnMsg;
+  'peer-bot-retire': PeerBotRetireMsg;
+  'peer-bot-join': PeerBotJoinMsg;
 }
 
 type ServerMsg =
@@ -91,7 +115,9 @@ type ServerMsg =
   | PeerShootMsg
   | PeerHitMsg
   | PeerKillMsg
-  | PeerRespawnMsg;
+  | PeerRespawnMsg
+  | PeerBotRetireMsg
+  | PeerBotJoinMsg;
 
 /**
  * Multiplayer presence client. Lazy: nothing is sent until {@link connect}
@@ -119,6 +145,8 @@ export class NetClient {
     'peer-hit': [],
     'peer-kill': [],
     'peer-respawn': [],
+    'peer-bot-retire': [],
+    'peer-bot-join': [],
   };
 
   /** Subscribe to a server-relayed combat event. Returns an unsubscribe fn. */
@@ -146,10 +174,14 @@ export class NetClient {
   }
 
   /**
-   * Send a JSON-serialisable combat message (`shoot` / `hit` / `kill` /
-   * `respawn`). No-op if socket is closed.
+   * Send a JSON-serialisable combat / bot-envelope message
+   * (`shoot` / `hit` / `kill` / `respawn` / `bot-retire` / `bot-join`).
+   * No-op if socket is closed.
    */
-  send(payload: { type: 'shoot' | 'hit' | 'kill' | 'respawn'; [k: string]: unknown }): void {
+  send(payload: {
+    type: 'shoot' | 'hit' | 'kill' | 'respawn' | 'bot-retire' | 'bot-join';
+    [k: string]: unknown;
+  }): void {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return;
     this.socket.send(JSON.stringify(payload));
   }
@@ -246,6 +278,12 @@ export class NetClient {
         break;
       case 'peer-respawn':
         this.emit('peer-respawn', msg);
+        break;
+      case 'peer-bot-retire':
+        this.emit('peer-bot-retire', msg);
+        break;
+      case 'peer-bot-join':
+        this.emit('peer-bot-join', msg);
         break;
     }
   }
