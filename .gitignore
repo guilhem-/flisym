@@ -10,3 +10,6 @@ npm-debug.log*
 coverage/
 .idea/
 .vscode/
+playwright-report/
+test-results/
+.playwright/

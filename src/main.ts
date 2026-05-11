@@ -354,12 +354,13 @@ if (import.meta.env.DEV) {
       timeTrialTrainer(): void {
         switcher.setMode('time-trial');
         hud.setMode(switcher.status());
-        // Position slightly before gate 0 with cruise velocity so the player
-        // crosses on the next few frames with no input required.
-        state.x_W.set(-200, FLIGHT_MODEL.groundY + 60, 0);
+        // Gate 0 is at world (1500, 250, 0) heading +X (src/challenge/gates.ts).
+        // Spawn ~100 m short, on centerline, at gate altitude + cruise speed
+        // so the player crosses gate 0 within ~2 s with no input required.
+        state.x_W.set(1400, 250, 0);
         state.v_W.set(60, 0, 0);
         state.q.identity();
-        state.throttle = 0.8;
+        state.throttle = 0.85;
       },
       reset(): void {
         switcher.setMode(getDefaultModeId());

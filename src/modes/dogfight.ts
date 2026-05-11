@@ -145,8 +145,26 @@ interface BotRecord {
 
 /** Optional HUD APIs the mode targets — hud-combat (Wave C) supplies these. */
 interface HudWithCombat {
-  setCombat?(state: unknown): void;
+  setCombat?(state: HudCombatSnapshot | null): void;
   setMission?(state: unknown): void;
+}
+
+/** Mirror of `CombatSnapshot` in src/hud/types.ts — duplicated to keep
+ *  modes/ free of an import on hud/types.ts. */
+interface HudCombatSnapshot {
+  self: {
+    id: string;
+    isAlive: boolean;
+    hp: { airframe: number; engine: number; aileron: number; elevator: number; rudder: number };
+    gunRoundsL: number;
+    gunRoundsR: number;
+    missileRailsRemaining: number;
+    bombsRemaining: number;
+  };
+  score: { kills: number; deaths: number };
+  lockState: 'off' | 'seeking' | 'locked';
+  targetBox: null;
+  radarContacts: Array<{ id: string; relX: number; relZ: number; hostile: boolean }>;
 }
 
 export class DogfightMode implements Mode {
@@ -627,9 +645,37 @@ export class DogfightMode implements Mode {
     const c = this.combat;
     if (!c) return;
     const hud = ctx.hud as unknown as HudWithCombat;
-    if (typeof hud.setCombat === 'function') {
-      hud.setCombat(c.snapshot());
+    if (typeof hud.setCombat !== 'function') return;
+
+    const cs = c.snapshot();
+    const self = cs.participants.find((p) => p.id === 'player');
+    if (!self) return;
+
+    // Build radar contacts from the other participants (non-player).
+    const ps = ctx.playerState;
+    const radarContacts: Array<{ id: string; relX: number; relZ: number; hostile: boolean }> = [];
+    for (const p of cs.participants) {
+      if (p.id === 'player') continue;
+      const bot = this.bot && this.bot.id === p.id ? this.bot : null;
+      if (!bot) continue;
+      // Body-frame relative position: rotate (target - self) by player's inverse quaternion.
+      const dx = bot.state.x_W.x - ps.x_W.x;
+      const dy = bot.state.x_W.y - ps.x_W.y;
+      const dz = bot.state.x_W.z - ps.x_W.z;
+      const v = new THREE.Vector3(dx, dy, dz);
+      v.applyQuaternion(ps.q.clone().invert());
+      radarContacts.push({ id: p.id, relX: v.x, relZ: v.z, hostile: true });
     }
+
+    const lockState: 'off' | 'seeking' | 'locked' = this.playerLockedTargetId ? 'locked' : 'off';
+
+    hud.setCombat({
+      self,
+      score: { kills: this.kills, deaths: this.deaths },
+      lockState,
+      targetBox: null,
+      radarContacts,
+    });
   }
 }
 // Avoid unused-import / unused-symbol noise (kept above for forward-compat
