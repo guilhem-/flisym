@@ -29,12 +29,69 @@ interface PeerMsg {
   id: string;
   x: [number, number, number];
   q: [number, number, number, number];
+  /** v0.2 OPTIONAL combat extensions (combat-spec §7.2). */
+  hp?: { airframe: number; engine: number; a: number; e: number; r: number };
+  thr?: number;
+  alive?: boolean;
 }
 interface LeaveMsg {
   type: 'leave';
   id: string;
 }
-type ServerMsg = HelloMsg | PeerMsg | LeaveMsg;
+
+/** v0.2 wire schemas (combat-spec §7.2). */
+export interface PeerShootMsg {
+  type: 'peer-shoot';
+  id: string;
+  weapon: 'gun' | 'missile' | 'bomb';
+  originPos: [number, number, number];
+  originVel: [number, number, number];
+  originQ: [number, number, number, number];
+  t: number;
+  targetId?: string;
+}
+export interface PeerHitMsg {
+  type: 'peer-hit';
+  id: string;
+  shooterId: string;
+  targetId: string;
+  weapon: 'gun' | 'missile' | 'bomb' | 'sam';
+  zone: 'airframe' | 'engine' | 'aileron' | 'elevator' | 'rudder';
+  hpLoss: number;
+  t: number;
+}
+export interface PeerKillMsg {
+  type: 'peer-kill';
+  id: string;
+  shooterId: string;
+  victimId: string;
+  weapon: 'gun' | 'missile' | 'bomb' | 'sam';
+  t: number;
+}
+export interface PeerRespawnMsg {
+  type: 'peer-respawn';
+  id: string;
+  x: [number, number, number];
+  q: [number, number, number, number];
+  t: number;
+}
+
+/** Map of event name → payload type. Drives the typed emitter. */
+export interface NetEvents {
+  'peer-shoot': PeerShootMsg;
+  'peer-hit': PeerHitMsg;
+  'peer-kill': PeerKillMsg;
+  'peer-respawn': PeerRespawnMsg;
+}
+
+type ServerMsg =
+  | HelloMsg
+  | PeerMsg
+  | LeaveMsg
+  | PeerShootMsg
+  | PeerHitMsg
+  | PeerKillMsg
+  | PeerRespawnMsg;
 
 /**
  * Multiplayer presence client. Lazy: nothing is sent until {@link connect}
@@ -50,6 +107,52 @@ export class NetClient {
   private readonly root = new THREE.Group();
   private readonly peers = new Map<string, PeerEntry>();
   private sendAccumulator = 0;
+
+  /**
+   * Typed mini-emitter for v0.2 combat events. CombatSystem subscribes to
+   * `peer-shoot`, `peer-hit`, `peer-kill`, `peer-respawn`. No deps.
+   */
+  private readonly listeners: {
+    [K in keyof NetEvents]: Array<(ev: NetEvents[K]) => void>;
+  } = {
+    'peer-shoot': [],
+    'peer-hit': [],
+    'peer-kill': [],
+    'peer-respawn': [],
+  };
+
+  /** Subscribe to a server-relayed combat event. Returns an unsubscribe fn. */
+  on<K extends keyof NetEvents>(
+    type: K,
+    fn: (ev: NetEvents[K]) => void,
+  ): () => void {
+    this.listeners[type].push(fn);
+    return () => {
+      const arr = this.listeners[type];
+      const idx = arr.indexOf(fn);
+      if (idx >= 0) arr.splice(idx, 1);
+    };
+  }
+
+  private emit<K extends keyof NetEvents>(type: K, ev: NetEvents[K]): void {
+    const arr = this.listeners[type];
+    for (let i = 0; i < arr.length; i += 1) {
+      try {
+        arr[i]!(ev);
+      } catch {
+        // Listener errors are swallowed; the relay must not break siblings.
+      }
+    }
+  }
+
+  /**
+   * Send a JSON-serialisable combat message (`shoot` / `hit` / `kill` /
+   * `respawn`). No-op if socket is closed.
+   */
+  send(payload: { type: 'shoot' | 'hit' | 'kill' | 'respawn'; [k: string]: unknown }): void {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return;
+    this.socket.send(JSON.stringify(payload));
+  }
 
   /** Connect to a presence server. Idempotent: calling twice is a no-op. */
   connect(url: string): void {
@@ -131,6 +234,18 @@ export class NetClient {
         break;
       case 'leave':
         this.removePeer(msg.id);
+        break;
+      case 'peer-shoot':
+        this.emit('peer-shoot', msg);
+        break;
+      case 'peer-hit':
+        this.emit('peer-hit', msg);
+        break;
+      case 'peer-kill':
+        this.emit('peer-kill', msg);
+        break;
+      case 'peer-respawn':
+        this.emit('peer-respawn', msg);
         break;
     }
   }

@@ -45,6 +45,14 @@ export function updateControlSurfaces(
   controls: Controls,
   dt: number,
 ): void {
+  // v0.2 combat damage: when the engine is destroyed, force throttle and the
+  // throttle command to zero before the integrator's 1st-order lag step runs.
+  // Gated on `state.hp` defined-check so v0.1 callers see no behavior change.
+  if (state.hp && state.hp.engine <= 0) {
+    state.throttle = 0;
+    controls.throttleCmd = 0;
+  }
+
   const r = FLIGHT_MODEL.controlRate;
   const cr = FLIGHT_MODEL.controlCenterRate;
 

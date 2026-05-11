@@ -24,4 +24,4 @@ export { physicsStep, advance, setWindFn } from './step.js';
 export type { GroundHeightFn, WindFn } from './step.js';
 
 export { createInitialState, createNeutralControls } from './state.js';
-export type { AircraftState, Controls } from './state.js';
+export type { AircraftState, AircraftHp, Controls } from './state.js';

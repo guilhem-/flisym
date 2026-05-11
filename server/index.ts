@@ -7,9 +7,14 @@
  *     ids of currently connected peers (excluding self).
  *   - Clients send `{type:"state", x:[x,y,z], q:[x,y,z,w]}`; server
  *     re-broadcasts as `{type:"peer", id, x, q}` to OTHER clients.
+ *   - Clients send combat messages of type `'shoot' | 'hit' | 'kill' |
+ *     'respawn'`; server re-broadcasts each as `peer-<type>` with the
+ *     sender's id attached. Payload bodies pass through unmodified.
  *   - On disconnect, server broadcasts `{type:"leave", id}`.
  *
- * No matchmaking, no auth, no persistence. Local trust model.
+ * No matchmaking, no auth, no persistence. Local trust model. v0.2
+ * combat events are client-side detection + server-relayed, no
+ * anti-cheat — see docs/combat-spec.md §7.1.
  */
 
 import { WebSocketServer, type WebSocket } from 'ws';
@@ -51,16 +56,41 @@ wss.on('connection', (socket) => {
     } catch {
       return;
     }
-    if (
-      typeof msg === 'object' &&
-      msg !== null &&
-      (msg as { type?: unknown }).type === 'state'
-    ) {
-      const m = msg as { type: 'state'; x?: unknown; q?: unknown };
+    if (typeof msg !== 'object' || msg === null) return;
+    const t = (msg as { type?: unknown }).type;
+
+    if (t === 'state') {
+      const m = msg as {
+        type: 'state';
+        x?: unknown;
+        q?: unknown;
+        hp?: unknown;
+        thr?: unknown;
+        alive?: unknown;
+      };
       // Pass-through validation: x and q should be arrays of numbers.
+      // hp / thr / alive are optional v0.2 extensions; preserved when present.
       if (Array.isArray(m.x) && Array.isArray(m.q)) {
-        broadcast(id, { type: 'peer', id, x: m.x, q: m.q });
+        const out: Record<string, unknown> = {
+          type: 'peer',
+          id,
+          x: m.x,
+          q: m.q,
+        };
+        if (m.hp !== undefined) out.hp = m.hp;
+        if (m.thr !== undefined) out.thr = m.thr;
+        if (m.alive !== undefined) out.alive = m.alive;
+        broadcast(id, out);
       }
+      return;
+    }
+
+    // v0.2 combat relay: shoot / hit / kill / respawn pass through with
+    // shooter id attached under `peer-<type>`.
+    if (t === 'shoot' || t === 'hit' || t === 'kill' || t === 'respawn') {
+      const m = msg as Record<string, unknown>;
+      broadcast(id, { ...m, type: `peer-${t}`, id });
+      return;
     }
   });
 

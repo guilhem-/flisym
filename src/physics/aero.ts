@@ -78,12 +78,13 @@ export function rollMomentCoefficient(
   rHat: number,
   delta_a: number,
   delta_r: number,
+  aileronAuthority: number = 1,
 ): number {
   return (
     C.Clbeta * beta +
     C.Clp * pHat +
     C.Clr * rHat +
-    C.Clda * delta_a +
+    C.Clda * aileronAuthority * delta_a +
     C.Cldr * delta_r
   );
 }
@@ -94,12 +95,13 @@ export function pitchMomentCoefficient(
   qHat: number,
   delta_e: number,
   delta_f: number,
+  elevatorAuthority: number = 1,
 ): number {
   return (
     C.Cm0 +
     C.Cmalpha * alpha +
     C.Cmq * qHat +
-    C.Cmde * delta_e +
+    C.Cmde * elevatorAuthority * delta_e +
     C.Cmflaps * delta_f
   );
 }
@@ -111,13 +113,14 @@ export function yawMomentCoefficient(
   rHat: number,
   delta_a: number,
   delta_r: number,
+  rudderAuthority: number = 1,
 ): number {
   return (
     C.Cnbeta * beta +
     C.Cnp * pHat +
     C.Cnr * rHat +
     C.Cnda * delta_a +
-    C.Cndr * delta_r
+    C.Cndr * rudderAuthority * delta_r
   );
 }
 
@@ -172,9 +175,28 @@ export function computeAeroForcesMoments(
   const qHat = (q * C.mac) / (2 * Vrate);
   const rHat = (r * C.span) / (2 * Vrate);
 
-  const Cl = rollMomentCoefficient(beta, pHat, rHat, state.delta_a, state.delta_r);
-  const Cm = pitchMomentCoefficient(alpha, qHat, state.delta_e, state.delta_f);
-  const Cn = yawMomentCoefficient(beta, pHat, rHat, state.delta_a, state.delta_r);
+  // v0.2 damaged-surface authority scaling. When `state.hp` is defined and a
+  // control surface zone is at 0 HP, that surface's input coefficient is
+  // multiplied by 0.4 (i.e. 60 % loss of authority, per spec §4.2).
+  // Gated on the `state.hp` defined-check so v0.1 callers see no change.
+  let aileronAuth = 1;
+  let elevatorAuth = 1;
+  let rudderAuth = 1;
+  if (state.hp) {
+    if (state.hp.controls.aileron <= 0) aileronAuth = 0.4;
+    if (state.hp.controls.elevator <= 0) elevatorAuth = 0.4;
+    if (state.hp.controls.rudder <= 0) rudderAuth = 0.4;
+  }
+
+  const Cl = rollMomentCoefficient(
+    beta, pHat, rHat, state.delta_a, state.delta_r, aileronAuth,
+  );
+  const Cm = pitchMomentCoefficient(
+    alpha, qHat, state.delta_e, state.delta_f, elevatorAuth,
+  );
+  const Cn = yawMomentCoefficient(
+    beta, pHat, rHat, state.delta_a, state.delta_r, rudderAuth,
+  );
 
   const L_roll = qbar * C.wingArea * C.span * Cl;
   let M_pitch = qbar * C.wingArea * C.mac * Cm;

@@ -18,6 +18,21 @@ export interface Controls {
 }
 
 /**
+ * Per-zone hit-points for the v0.2 combat damage model (see
+ * `docs/combat-spec.md` §4). Optional on AircraftState so v0.1 callers
+ * that never touch combat see byte-for-byte identical behavior.
+ */
+export interface AircraftHp {
+  airframe: number;
+  engine: number;
+  controls: {
+    aileron: number;
+    elevator: number;
+    rudder: number;
+  };
+}
+
+/**
  * Full aircraft 6DOF state. ω_B uses the spec's axis packing where
  *   ω_B.x = p (roll rate, body +X)
  *   ω_B.y = r (yaw rate,  body +Y)
@@ -51,6 +66,16 @@ export interface AircraftState {
   time: number;
   /** Render-time accumulator for fixed-step integration. */
   accumulator: number;
+
+  /**
+   * v0.2 combat damage zones. Optional: physics code only reacts when
+   * defined, so v0.1 callers that never set `hp` get identical behavior.
+   */
+  hp?: AircraftHp;
+  /** True while `hp.airframe > 0`. v0.1 default `true`. */
+  isAlive?: boolean;
+  /** When `state.time >= respawnAt`, combat system calls respawn(). */
+  respawnAt?: number | null;
 }
 
 export function createInitialState(): AircraftState {
@@ -68,6 +93,13 @@ export function createInitialState(): AircraftState {
     stallFlag: false,
     time: 0,
     accumulator: 0,
+    hp: {
+      airframe: 100,
+      engine: 100,
+      controls: { aileron: 100, elevator: 100, rudder: 100 },
+    },
+    isAlive: true,
+    respawnAt: null,
   };
 }
 

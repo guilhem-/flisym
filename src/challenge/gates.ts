@@ -165,12 +165,16 @@ export class GateCourse {
         this.timerStarted = true;
       }
 
-      if (lateralDist < CLEAR_RADIUS) {
+      const cleared = lateralDist < CLEAR_RADIUS;
+      if (cleared) {
         this.state.totalCleared += 1;
         this.markCleared(gate);
       } else {
         this.state.missed += 1;
         this.markMissed(gate);
+      }
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('challenge:gate', { detail: { index: idx, cleared, t: this.state.courseTime } }));
       }
       this.advance();
     } else {
