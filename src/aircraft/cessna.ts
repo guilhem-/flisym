@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 /**
  * Procedural Cessna 172-style aircraft.
@@ -626,6 +627,24 @@ export function buildCessna(): CessnaBuild {
   //   point, so lift the body inside root by +GEAR_HEIGHT.
   body.position.set(0, GEAR_HEIGHT, 0);
 
+  // ---- Draw-call optimization: merge static sub-meshes by material -------
+  // Before merge, this build produced ~41 separate THREE.Mesh instances per
+  // aircraft, which made the graphics-budget test exceed the 200-drawcall
+  // cap with 4 aircraft in the scene. We merge every static mesh (anything
+  // not parented under one of the animated pivots) into a single mesh per
+  // material so per-aircraft draws drop to ~12 (one merged group per
+  // material + the 6 animated control surfaces + the 3 prop-blade-tier
+  // meshes inside propellerPivot, all retained for animation).
+  const animatedPivots = new Set<THREE.Object3D>([
+    propellerPivot,
+    leftAileronPivot,
+    rightAileronPivot,
+    elevatorPivot,
+    rudderPivot,
+    flapsPivot,
+  ]);
+  mergeStaticMeshesByMaterial(body, animatedPivots);
+
   return {
     group: root,
     parts: {
@@ -637,4 +656,196 @@ export function buildCessna(): CessnaBuild {
       flaps: flapsPivot,
     },
   };
+}
+
+// --- Static-mesh merge helper ----------------------------------------------
+
+/**
+ * Walks `root`'s subtree and merges all static sub-meshes (those NOT parented
+ * under a pivot in `animatedPivots`) into one merged mesh per material,
+ * appended directly to `root`. The original static meshes are removed.
+ *
+ * Static transforms (e.g. `leftWingPivot.rotation.x = WING_DIHEDRAL`,
+ * per-strut rotations, per-gear positions) are baked into the merged
+ * geometry by composing the matrix from each leaf mesh up to `root`,
+ * skipping any subtree rooted at an animated pivot.
+ *
+ * Animated pivots and their descendants are left untouched. We do, however,
+ * also merge the propeller's hub + two prop blades + two blade tips (which
+ * share three materials but all live INSIDE the rotating pivot) so we end
+ * up with three meshes inside `propellerPivot` rather than five.
+ */
+function mergeStaticMeshesByMaterial(
+  root: THREE.Object3D,
+  animatedPivots: Set<THREE.Object3D>,
+): void {
+  // 1. Merge inside each animated pivot first (so its child meshes are
+  //    collapsed by material, with each pivot still rotating as a whole).
+  for (const pivot of animatedPivots) {
+    mergeInsidePivot(pivot);
+  }
+
+  // 2. Merge the rest of the static tree, baking transforms relative to
+  //    `root`.
+  const groups = new Map<THREE.Material, THREE.BufferGeometry[]>();
+  const toDetach: THREE.Object3D[] = [];
+
+  root.updateMatrixWorld(true);
+  const rootInv = new THREE.Matrix4().copy(root.matrixWorld).invert();
+
+  root.traverse((obj) => {
+    // Skip animated pivots and their entire subtree.
+    let p: THREE.Object3D | null = obj;
+    while (p && p !== root) {
+      if (animatedPivots.has(p)) return;
+      p = p.parent;
+    }
+    if (!(obj instanceof THREE.Mesh)) return;
+    if (Array.isArray(obj.material)) return; // not collapsing multi-material meshes
+    const mat = obj.material as THREE.Material;
+    const geom = obj.geometry.clone();
+    // Bake world transform → root-local transform into the geometry.
+    const m = new THREE.Matrix4().multiplyMatrices(rootInv, obj.matrixWorld);
+    geom.applyMatrix4(m);
+    // Normalize attribute set: keep only position + normal + uv so
+    // mergeGeometries works (it requires matching attribute layouts).
+    pruneToCoreAttributes(geom);
+    const arr = groups.get(mat) ?? [];
+    arr.push(geom);
+    groups.set(mat, arr);
+    toDetach.push(obj);
+  });
+
+  // Detach the original static meshes from their parents.
+  for (const m of toDetach) {
+    m.parent?.remove(m);
+  }
+  // Also detach any now-childless Groups that were purely structural (e.g.
+  // wing pivots, gear groups) so they don't add an extra Object3D entry to
+  // the scene-graph traversal. We keep the wing pivots if they still contain
+  // the aileron pivot children.
+  pruneEmptyGroups(root, animatedPivots);
+
+  // Build one merged Mesh per material under `root`.
+  for (const [mat, geoms] of groups) {
+    if (geoms.length === 0) continue;
+    const merged = geoms.length === 1 ? geoms[0]! : mergeGeometries(geoms, false);
+    if (!merged) continue;
+    const mesh = new THREE.Mesh(merged, mat);
+    mesh.name = `merged_${matTagFor(mat)}`;
+    root.add(mesh);
+  }
+}
+
+/**
+ * Collapse the immediate Mesh children of an animated pivot by material into
+ * one Mesh per material, parented under the same pivot. Each child's local
+ * transform is baked into its geometry so the merged mesh sits in the pivot's
+ * local frame.
+ */
+function mergeInsidePivot(pivot: THREE.Object3D): void {
+  // Collect Meshes that are direct OR indirect descendants of the pivot
+  // (we want to flatten any non-pivot intermediate groups too).
+  const meshes: THREE.Mesh[] = [];
+  pivot.traverse((obj) => {
+    if (obj === pivot) return;
+    if (obj instanceof THREE.Mesh && !Array.isArray(obj.material)) {
+      meshes.push(obj);
+    }
+  });
+  if (meshes.length <= 1) return;
+  pivot.updateMatrixWorld(true);
+  const pivotInv = new THREE.Matrix4().copy(pivot.matrixWorld).invert();
+
+  const groups = new Map<THREE.Material, THREE.BufferGeometry[]>();
+  for (const m of meshes) {
+    const mat = m.material as THREE.Material;
+    const geom = m.geometry.clone();
+    const local = new THREE.Matrix4().multiplyMatrices(pivotInv, m.matrixWorld);
+    geom.applyMatrix4(local);
+    pruneToCoreAttributes(geom);
+    const arr = groups.get(mat) ?? [];
+    arr.push(geom);
+    groups.set(mat, arr);
+  }
+  // Detach all original meshes from their parents.
+  for (const m of meshes) m.parent?.remove(m);
+  // Re-attach one merged mesh per material directly under the pivot.
+  for (const [mat, geoms] of groups) {
+    if (geoms.length === 0) continue;
+    const merged = geoms.length === 1 ? geoms[0]! : mergeGeometries(geoms, false);
+    if (!merged) continue;
+    const mesh = new THREE.Mesh(merged, mat);
+    mesh.name = `${pivot.name || 'pivot'}_merged_${matTagFor(mat)}`;
+    pivot.add(mesh);
+  }
+}
+
+/**
+ * Recursively remove childless Object3D groups under `root` (skipping
+ * animated pivots — they may legitimately end up with one merged child).
+ */
+function pruneEmptyGroups(
+  root: THREE.Object3D,
+  animatedPivots: Set<THREE.Object3D>,
+): void {
+  // Post-order pass: walk children first, then drop empties.
+  for (const child of [...root.children]) {
+    if (animatedPivots.has(child)) continue;
+    pruneEmptyGroups(child, animatedPivots);
+    if (
+      child.children.length === 0 &&
+      !(child instanceof THREE.Mesh) &&
+      !(child instanceof THREE.Light) &&
+      !(child instanceof THREE.Camera)
+    ) {
+      root.remove(child);
+    }
+  }
+}
+
+/**
+ * Strip a geometry's attribute set down to position + normal + uv so the
+ * geometry can be merged with `mergeGeometries`, which requires matching
+ * attribute layouts across all input geometries. Various Three.js geometry
+ * helpers (BoxGeometry, ExtrudeGeometry, LatheGeometry, etc.) emit
+ * additional attributes that differ between helpers; the merge fails if any
+ * input lacks a shared attribute, so we normalize.
+ */
+function pruneToCoreAttributes(geom: THREE.BufferGeometry): void {
+  // mergeGeometries requires all inputs be all-indexed or all-non-indexed.
+  // The cessna mix includes ExtrudeGeometry (non-indexed) alongside Box /
+  // Cylinder / Cone / Lathe (all indexed), so we standardize to non-indexed.
+  if (geom.index !== null) {
+    const flat = geom.toNonIndexed();
+    geom.copy(flat);
+  }
+  // Ensure normals exist so lighting matches the original meshes.
+  if (!geom.getAttribute('normal')) {
+    geom.computeVertexNormals();
+  }
+  // Add a placeholder UV if missing so all merged inputs share the same
+  // attribute layout. The merged mesh's materials don't actually sample
+  // textures, so the UVs are inert.
+  const pos = geom.getAttribute('position');
+  if (pos && !geom.getAttribute('uv')) {
+    const uvs = new Float32Array(pos.count * 2);
+    geom.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  }
+  // Drop any non-core attributes so all merged inputs match.
+  const keep = new Set(['position', 'normal', 'uv']);
+  for (const name of Object.keys(geom.attributes)) {
+    if (!keep.has(name)) {
+      geom.deleteAttribute(name);
+    }
+  }
+}
+
+function matTagFor(mat: THREE.Material): string {
+  // Short stable tag for debug naming. Uses the material's color where
+  // available, else its uuid prefix.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const c = (mat as any).color as THREE.Color | undefined;
+  if (c && typeof c.getHexString === 'function') return c.getHexString();
+  return mat.uuid.slice(0, 6);
 }

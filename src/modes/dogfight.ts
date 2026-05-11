@@ -38,6 +38,7 @@ import {
   type EnemyView,
   type Percepts,
 } from '../ai/index.js';
+import { CombatAudio } from '../audio/combat.js';
 
 const META: ModeMeta = {
   id: 'dogfight',
@@ -190,6 +191,13 @@ export class DogfightMode implements Mode {
   private aiAccum = 0;
   private playerSpawnQuat = playerSpawnQ();
   private playerLockedTargetId: string | null = null;
+  /** Lock progression for HUD + audio: 'off' (no designation) → 'seeking'
+   *  (target designated via T but seeker not yet confirmed) → 'locked'
+   *  (seeker confirmed via L within IR cone). */
+  private lockState: 'off' | 'seeking' | 'locked' = 'off';
+  /** Edge-trigger memory for combat audio. */
+  private lastEmittedLockState: 'off' | 'seeking' | 'locked' = 'off';
+  private combatAudio: CombatAudio = new CombatAudio();
   private gunHeld = false;
   private respawnEdge = false;
   private lastDeathLatched = false;
@@ -210,6 +218,8 @@ export class DogfightMode implements Mode {
     this.deaths = 0;
     this.aiAccum = 0;
     this.playerLockedTargetId = null;
+    this.lockState = 'off';
+    this.lastEmittedLockState = 'off';
     this.gunHeld = false;
     this.respawnEdge = false;
     this.lastDeathLatched = false;
@@ -528,6 +538,9 @@ export class DogfightMode implements Mode {
     this.bot = null;
     this.playerWeapons = null;
     this.ctx = null;
+    // Silence any active lock tone on mode exit (idempotent if already off).
+    this.combatAudio.stopLockTone();
+    this.lastEmittedLockState = 'off';
   }
 
   // ── Public test helpers ──────────────────────────────────────────────────
@@ -560,11 +573,19 @@ export class DogfightMode implements Mode {
   private cycleTarget(): void {
     if (!this.bot) {
       this.playerLockedTargetId = null;
+      this.lockState = 'off';
       return;
     }
-    // Only one target in v0.2 — toggle lock between bot and none.
-    if (this.playerLockedTargetId === this.bot.id) this.playerLockedTargetId = null;
-    else this.playerLockedTargetId = this.bot.id;
+    // Only one target in v0.2 — toggle designation between bot and none.
+    // Designation moves the state to 'seeking' (target boxed, seeker
+    // searching). The full 'locked' state engages via refreshLock() (L key).
+    if (this.playerLockedTargetId === this.bot.id) {
+      this.playerLockedTargetId = null;
+      this.lockState = 'off';
+    } else {
+      this.playerLockedTargetId = this.bot.id;
+      this.lockState = 'seeking';
+    }
   }
 
   private refreshLock(): void {
@@ -585,7 +606,13 @@ export class DogfightMode implements Mode {
     }
     const id = acquireLock(ps.x_W, fwd, seekerTargets, 'ir', 'player');
     this.playerLockedTargetId = id;
-    if (id) ctx.emit({ type: 'lock_acquired', target: id, t: ps.time });
+    if (id) {
+      this.lockState = 'locked';
+      ctx.emit({ type: 'lock_acquired', target: id, t: ps.time });
+    } else {
+      // No valid target inside the seeker cone — fall back to off.
+      this.lockState = 'off';
+    }
   }
 
   private requestRespawn(): void {
@@ -667,7 +694,18 @@ export class DogfightMode implements Mode {
       radarContacts.push({ id: p.id, relX: v.x, relZ: v.z, hostile: true });
     }
 
-    const lockState: 'off' | 'seeking' | 'locked' = this.playerLockedTargetId ? 'locked' : 'off';
+    // Auto-clear lock if the designated target is gone (bot retired/killed).
+    if (
+      this.lockState !== 'off' &&
+      (this.bot === null ||
+        this.bot.state.isAlive === false ||
+        this.bot.id !== this.playerLockedTargetId)
+    ) {
+      this.playerLockedTargetId = null;
+      this.lockState = 'off';
+    }
+    const lockState = this.lockState;
+    this.emitLockAudioEdges(lockState);
 
     hud.setCombat({
       self,
@@ -676,6 +714,15 @@ export class DogfightMode implements Mode {
       targetBox: null,
       radarContacts,
     });
+  }
+
+  /** Drive the lock-tone audio voice off transitions in `this.lockState`. */
+  private emitLockAudioEdges(now: 'off' | 'seeking' | 'locked'): void {
+    if (now === this.lastEmittedLockState) return;
+    if (now === 'seeking') this.combatAudio.playLockSeeking();
+    else if (now === 'locked') this.combatAudio.playLockSolid();
+    else this.combatAudio.stopLockTone();
+    this.lastEmittedLockState = now;
   }
 }
 // Avoid unused-import / unused-symbol noise (kept above for forward-compat

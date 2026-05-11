@@ -36,6 +36,7 @@ import {
   type MissionDef,
 } from '../mission/index.js';
 import { mulberry32 } from '../ai/prng.js';
+import { CombatAudio } from '../audio/combat.js';
 
 const META: ModeMeta = {
   id: 'strike-mission',
@@ -75,6 +76,7 @@ interface MissionHudShape {
     bombsTotal: number;
     targets: ReadonlyArray<{ id: string; status: 'LIVE' | 'HIT' | 'DEAD' }>;
   }): void;
+  showSamWarning?(): void;
 }
 
 export class StrikeMissionMode implements Mode {
@@ -109,6 +111,8 @@ export class StrikeMissionMode implements Mode {
    *  Read only by the HUD wiring path; intentionally left available even
    *  when no `setMission` consumer is present. */
   samWarnUntil = 0;
+
+  private combatAudio: CombatAudio = new CombatAudio();
 
   private onKeyDown: ((e: KeyboardEvent) => void) | null = null;
 
@@ -294,6 +298,10 @@ export class StrikeMissionMode implements Mode {
         sam.lastFireT = ctx.playerState.time;
         this.samWarnUntil = ctx.playerState.time + 3.0;
         ctx.emit({ type: 'lock_acquired', target: 'player', t: ctx.playerState.time });
+        // Audio warning + HUD banner.
+        this.combatAudio.playSamWarning();
+        const hud = ctx.hud as unknown as MissionHudShape;
+        if (typeof hud.showSamWarning === 'function') hud.showSamWarning();
       }
     }
 
