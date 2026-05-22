@@ -120,6 +120,22 @@ describe('DogfightMode', () => {
     mode.dispose();
   });
 
+  test('init does NOT leave player at zero velocity / instant-stall', () => {
+    // Regression for "press 3 → STALL appears instantly". `combatRespawn`
+    // unconditionally zeroes v_W and throttle (damage.ts respawn()); if the
+    // mode init calls it AFTER setting the spawn velocity, the next physics
+    // step computes alpha from (u=0, v=−g·dt) → ~90° and the STALL flag
+    // latches on frame 1. Order must be: respawn first, spawn pose second.
+    const { ctx } = makeCtx();
+    const mode = new DogfightMode();
+    mode.init(ctx);
+    // Player should have the dogfight spawn velocity and throttle, not zero.
+    expect(ctx.playerState.v_W.length()).toBeGreaterThan(60);
+    expect(ctx.playerState.throttle).toBeGreaterThan(0.5);
+    expect(ctx.playerState.stallFlag).toBe(false);
+    mode.dispose();
+  });
+
   test('after 60 s of simulated time, bot has acquired player as target', () => {
     const { ctx } = makeCtx();
     const mode = new DogfightMode();

@@ -1,8 +1,9 @@
 // Keyboard input wiring tests.
 //
 // Asserts:
-//   1. Arrow keys map to pitch (↑/↓) and roll (←/→), matching the WASD
-//      pilot-convention mapping (↑ = nose up = +elevatorCmd, etc.).
+//   1. Arrow keys map to pitch (↑/↓) and roll (←/→) using the STICK
+//      convention so both bindings agree: ↑ = push forward = nose down,
+//      ↓ = pull back = nose up. (W aligns with ↑, S aligns with ↓.)
 //   2. Arrow keydown/keyup calls preventDefault — without this the browser
 //      scrolls the page on every arrow press and the held-state never gets
 //      a chance to drive controls. This is the bug a previous session hit.
@@ -104,21 +105,21 @@ function tickInput(
 }
 
 describe('KeyboardInput — arrow-key pitch/roll', () => {
-  test('ArrowUp drives elevatorCmd toward +1 (nose up)', () => {
+  test('ArrowUp drives elevatorCmd toward -1 (nose down, stick-forward)', () => {
     const input = new KeyboardInput();
     win.dispatchEvent('keydown', makeKeyEvent('ArrowUp'));
     const controls = createNeutralControls();
     tickInput(input, controls, 1.0, 20); // 1 second @ 20Hz, ramp = 4/s
-    expect(controls.elevatorCmd).toBeGreaterThan(0.9);
+    expect(controls.elevatorCmd).toBeLessThan(-0.9);
     input.dispose();
   });
 
-  test('ArrowDown drives elevatorCmd toward -1 (nose down)', () => {
+  test('ArrowDown drives elevatorCmd toward +1 (nose up, stick-back)', () => {
     const input = new KeyboardInput();
     win.dispatchEvent('keydown', makeKeyEvent('ArrowDown'));
     const controls = createNeutralControls();
     tickInput(input, controls, 1.0, 20);
-    expect(controls.elevatorCmd).toBeLessThan(-0.9);
+    expect(controls.elevatorCmd).toBeGreaterThan(0.9);
     input.dispose();
   });
 
@@ -154,8 +155,8 @@ describe('KeyboardInput — arrow-key pitch/roll', () => {
     const input = new KeyboardInput();
     win.dispatchEvent('keydown', makeKeyEvent('ArrowUp'));
     const controls = createNeutralControls();
-    tickInput(input, controls, 1.0, 20); // ramps to ~+1
-    expect(controls.elevatorCmd).toBeGreaterThan(0.9);
+    tickInput(input, controls, 1.0, 20); // ramps to ~-1 (nose down)
+    expect(controls.elevatorCmd).toBeLessThan(-0.9);
     win.dispatchEvent('keyup', makeKeyEvent('ArrowUp'));
     tickInput(input, controls, 1.0, 20); // self-centers at 3/s
     expect(Math.abs(controls.elevatorCmd)).toBeLessThan(0.05);

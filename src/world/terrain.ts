@@ -1,11 +1,18 @@
 /**
- * Terrain — single displaced PlaneGeometry with vertex-color biomes.
+ * Terrain — displaced PlaneGeometry with vertex-color biomes.
  *
- * Build order (per spec §15):
- *   plane → displacement (with runway flatten) → vertex colors → normals.
+ * Parametric (size + segments) so the World can compose multiple LOD layers:
+ * a small high-density patch near the aircraft, a medium static patch, and
+ * the existing 50 km coarse mesh covering the whole playable area.
  *
  * The mesh uses a shared noise instance so `getGroundHeight` returns the
  * exact same value the mesh was built with (good for physics queries).
+ *
+ * If `followAircraft` is true, `setCenter(x, z)` snaps the mesh to a grid
+ * aligned with the segment spacing and re-displaces vertices so the
+ * heightmap is always sampled at the new world coordinates. The snap step
+ * matches one segment so the vertex positions in world frame remain
+ * consistent across moves (no jitter at the seams).
  *
  * See `/docs/world-spec.md` §2-4.
  */
@@ -55,52 +62,47 @@ function biomeColor(h: number, slope: number, out: THREE.Color): THREE.Color {
   return out;
 }
 
+export interface TerrainOptions {
+  /** Mesh side length in meters (default: WORLD_CONFIG.terrain.size). */
+  size?: number;
+  /** Segments per side (default: WORLD_CONFIG.terrain.segments). */
+  segments?: number;
+  /** Shared noise instance (default: createNoise()). */
+  noise?: NoiseFunction2D;
+  /**
+   * Render-state polygon offset. Lower values render "above" higher values
+   * when meshes overlap (negative pulls toward the camera in depth). Used to
+   * layer near/mid/far LODs without z-fighting.
+   */
+  polygonOffsetFactor?: number;
+  /**
+   * If true, `setCenter(x, z)` will move the mesh and re-displace vertices.
+   * Static terrain (default) ignores setCenter calls.
+   */
+  followAircraft?: boolean;
+  /** Debug name set on the mesh object. */
+  name?: string;
+}
+
 export class Terrain {
   readonly mesh: THREE.Mesh;
   private readonly noise: NoiseFunction2D;
+  private readonly followAircraft: boolean;
+  private readonly snapStep: number;
+  private centerX = 0;
+  private centerZ = 0;
 
-  constructor(noise?: NoiseFunction2D) {
-    this.noise = noise ?? createNoise();
+  constructor(opts: TerrainOptions = {}) {
+    const size = opts.size ?? WORLD_CONFIG.terrain.size;
+    const segments = opts.segments ?? WORLD_CONFIG.terrain.segments;
+    this.noise = opts.noise ?? createNoise();
+    this.followAircraft = opts.followAircraft ?? false;
+    this.snapStep = size / segments;
 
-    const { size, segments } = WORLD_CONFIG.terrain;
     const geometry = new THREE.PlaneGeometry(size, size, segments, segments);
     geometry.rotateX(-Math.PI / 2); // make Y up
 
-    const positions = geometry.attributes.position;
-    if (!positions) {
-      throw new Error('PlaneGeometry built without position attribute');
-    }
-    const vertexCount = positions.count;
-
-    // Displace.
-    for (let i = 0; i < vertexCount; i++) {
-      const x = positions.getX(i);
-      const z = positions.getZ(i);
-      const h = getHeightAt(x, z, this.noise);
-      positions.setY(i, h);
-    }
-    positions.needsUpdate = true;
-
-    geometry.computeVertexNormals();
-
-    // Vertex colors — height + slope.
-    const colors = new Float32Array(vertexCount * 3);
-    const normals = geometry.attributes.normal;
-    if (!normals) {
-      throw new Error('Vertex normals not computed');
-    }
-    const tmp = new THREE.Color();
-    for (let i = 0; i < vertexCount; i++) {
-      const h = positions.getY(i);
-      const ny = normals.getY(i);
-      const slope = 1 - ny; // 0 = flat, 1 = vertical
-      biomeColor(h, slope, tmp);
-      const o = i * 3;
-      colors[o] = tmp.r;
-      colors[o + 1] = tmp.g;
-      colors[o + 2] = tmp.b;
-    }
-    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    this.displace(geometry);
 
     const material = new THREE.MeshStandardMaterial({
       vertexColors: true,
@@ -108,12 +110,37 @@ export class Terrain {
       metalness: 0.0,
       flatShading: false,
     });
+    if (opts.polygonOffsetFactor !== undefined) {
+      material.polygonOffset = true;
+      material.polygonOffsetFactor = opts.polygonOffsetFactor;
+      material.polygonOffsetUnits = opts.polygonOffsetFactor;
+    }
 
     this.mesh = new THREE.Mesh(geometry, material);
-    this.mesh.name = 'Terrain';
-    // Static — skip per-frame matrix recompute (perf §12).
-    this.mesh.matrixAutoUpdate = false;
-    this.mesh.updateMatrix();
+    this.mesh.name = opts.name ?? 'Terrain';
+    // Static unless we follow the aircraft.
+    if (!this.followAircraft) {
+      this.mesh.matrixAutoUpdate = false;
+      this.mesh.updateMatrix();
+    }
+  }
+
+  /**
+   * Re-center a follow-aircraft LOD over the given world XZ. Snaps to one
+   * segment so vertex world positions don't drift across frames. Returns
+   * true if the center actually moved (caller can skip downstream work
+   * like tree placement re-evaluation).
+   */
+  setCenter(x: number, z: number): boolean {
+    if (!this.followAircraft) return false;
+    const sx = Math.round(x / this.snapStep) * this.snapStep;
+    const sz = Math.round(z / this.snapStep) * this.snapStep;
+    if (sx === this.centerX && sz === this.centerZ) return false;
+    this.centerX = sx;
+    this.centerZ = sz;
+    this.mesh.position.set(sx, 0, sz);
+    this.displace(this.mesh.geometry as THREE.PlaneGeometry);
+    return true;
   }
 
   /**
@@ -122,5 +149,53 @@ export class Terrain {
    */
   getGroundHeight(x: number, z: number): number {
     return getHeightAt(x, z, this.noise);
+  }
+
+  /**
+   * Displace vertices in place from the current centerX/centerZ offset.
+   * Updates vertex Y, normals, and the vertex-color buffer.
+   */
+  private displace(geometry: THREE.PlaneGeometry): void {
+    const positions = geometry.attributes.position;
+    if (!positions) {
+      throw new Error('PlaneGeometry built without position attribute');
+    }
+    const vertexCount = positions.count;
+    for (let i = 0; i < vertexCount; i++) {
+      const localX = positions.getX(i);
+      const localZ = positions.getZ(i);
+      const h = getHeightAt(localX + this.centerX, localZ + this.centerZ, this.noise);
+      positions.setY(i, h);
+    }
+    positions.needsUpdate = true;
+    geometry.computeVertexNormals();
+
+    const normals = geometry.attributes.normal;
+    if (!normals) {
+      throw new Error('Vertex normals not computed');
+    }
+
+    let colorAttr = geometry.attributes.color;
+    let colors: Float32Array;
+    if (!colorAttr) {
+      colors = new Float32Array(vertexCount * 3);
+      geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    } else {
+      colors = (colorAttr as THREE.BufferAttribute).array as Float32Array;
+    }
+    const tmp = new THREE.Color();
+    for (let i = 0; i < vertexCount; i++) {
+      const h = positions.getY(i);
+      const ny = normals.getY(i);
+      const slope = 1 - ny;
+      biomeColor(h, slope, tmp);
+      const o = i * 3;
+      colors[o] = tmp.r;
+      colors[o + 1] = tmp.g;
+      colors[o + 2] = tmp.b;
+    }
+    if (colorAttr) {
+      (colorAttr as THREE.BufferAttribute).needsUpdate = true;
+    }
   }
 }

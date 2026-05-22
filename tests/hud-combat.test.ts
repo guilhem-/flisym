@@ -686,4 +686,36 @@ describe('HUD v0.2 combat / mission / time-trial overlays', () => {
     expect(summary!.textContent).toBe('Time 1:03.00 — Missed 1 gate');
     hud.dispose();
   });
+
+  test('setEngineRpm writes the rpm value rounded to nearest 10', async () => {
+    const HUD = await loadHUD();
+    const hud = new HUD();
+    const rpm = hud.root.querySelector('[data-h="rpm"]');
+    expect(rpm).not.toBeNull();
+    hud.setEngineRpm(2387);
+    expect(rpm!.textContent).toBe('2390');
+    hud.setEngineRpm(703);
+    expect(rpm!.textContent).toBe('700');
+    // Negative throttle / extrapolation clamps to 0.
+    hud.setEngineRpm(-50);
+    expect(rpm!.textContent).toBe('0');
+    hud.dispose();
+  });
+
+  test('setBrake toggles label and data-brake attribute', async () => {
+    const HUD = await loadHUD();
+    const hud = new HUD();
+    const brake = hud.root.querySelector('[data-h="brake"]');
+    expect(brake).not.toBeNull();
+    // Default state on construction.
+    expect(brake!.getAttribute('data-brake')).toBe('off');
+    expect(brake!.textContent).toBe('OFF');
+    hud.setBrake(true);
+    expect(brake!.textContent).toBe('ON');
+    expect(brake!.getAttribute('data-brake')).toBe('on');
+    hud.setBrake(false);
+    expect(brake!.textContent).toBe('OFF');
+    expect(brake!.getAttribute('data-brake')).toBe('off');
+    hud.dispose();
+  });
 });

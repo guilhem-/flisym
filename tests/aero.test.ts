@@ -64,10 +64,19 @@ describe('aerodynamics (CL/lift-vs-weight, stall behavior)', () => {
     expect(flaps.CL).toBeGreaterThan(clean.CL);
   });
 
-  it('symmetric stall behavior at negative α', () => {
-    const negStall = liftCoefficient((-20 * Math.PI) / 180, 0, 0);
-    expect(negStall.stall).toBe(true);
-    expect(negStall.CL).toBeLessThan(0);
+  it('moderate negative α produces negative CL but does NOT flag stall', () => {
+    // The HUD STALL warning is for upright stalls. A pilot pushing the
+    // stick forward briefly drives α to small negative values; that's not
+    // a stall to surface, but the lift coefficient still drops accordingly.
+    const negDive = liftCoefficient((-20 * Math.PI) / 180, 0, 0);
+    expect(negDive.stall).toBe(false);
+    expect(negDive.CL).toBeLessThan(0);
+  });
+
+  it('deeply-negative α (inverted stall, < -28°) DOES flag stall', () => {
+    const invStall = liftCoefficient((-35 * Math.PI) / 180, 0, 0);
+    expect(invStall.stall).toBe(true);
+    expect(invStall.CL).toBeLessThan(0);
   });
 
   it('aero force vector is finite and well-defined at low V', () => {

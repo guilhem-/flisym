@@ -226,7 +226,15 @@ export class DogfightMode implements Mode {
 
     // --- Reset player to Dogfight spawn (mode owns this exception per
     // _mode-interface.md: "respawn-style resets").
+    //
+    // CRITICAL ORDER: `combatRespawn(ps)` zeroes v_W, omega_B, and throttle
+    // (see src/combat/damage.ts respawn()). Call it FIRST, then write the
+    // dogfight spawn velocity + throttle on top. Reversing this order
+    // leaves the player with v_W = 0; in the next physics step gravity
+    // drives v_body_y negative while u stays ~0, alpha jumps to ~90°, and
+    // the STALL flag latches instantly on mode entry.
     const ps = ctx.playerState;
+    combatRespawn(ps); // resets HP / isAlive / weapons; ALSO zeroes v_W/throttle
     ps.x_W.copy(PLAYER_SPAWN_POS);
     ps.q.copy(this.playerSpawnQuat);
     ps.v_W.copy(playerSpawnVelocity());
@@ -238,7 +246,6 @@ export class DogfightMode implements Mode {
     ps.delta_f = 0;
     ps.onGround = false;
     ps.accumulator = 0;
-    combatRespawn(ps); // resets HP / isAlive / weapons-side state on aircraft
     ctx.playerControls.aileronCmd = 0;
     ctx.playerControls.elevatorCmd = 0;
     ctx.playerControls.rudderCmd = 0;
@@ -624,6 +631,7 @@ export class DogfightMode implements Mode {
     this.respawnEdge = true;
     combatRespawn(ps, PLAYER_SPAWN_POS, this.playerSpawnQuat);
     ps.v_W.copy(playerSpawnVelocity());
+    ps.throttle = 0.85; // combatRespawn zeroed it
     if (this.playerWeapons) {
       this.playerWeapons.gunRoundsL = COMBAT_TUNING.bulletMagPerGun;
       this.playerWeapons.gunRoundsR = COMBAT_TUNING.bulletMagPerGun;

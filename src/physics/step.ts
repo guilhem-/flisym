@@ -88,7 +88,11 @@ export function physicsStep(
   } else {
     aero = computeAeroForcesMoments(state, rho);
   }
-  if (aero.stall) state.stallFlag = true;
+  // Mirror the current aero stall state instead of latching: the previous
+  // latch caused the HUD warning to stay lit forever even after the pilot
+  // recovered. `aero.stall` is true only while |α| ≥ α_stall, so this clears
+  // automatically once AoA drops back into the linear regime.
+  state.stallFlag = aero.stall;
 
   const v_B_x = bodyVelocityForwardComponent(state);
   const V_for_thrust = Math.max(0, v_B_x);
@@ -100,8 +104,13 @@ export function physicsStep(
 
   // Total body moment = aero + propeller torque reaction.
   _M_B.copy(aero.M_aero_B);
-  // Optional prop torque: rolls left under power. M_B.x is roll axis.
-  _M_B.x += -0.05 * T;
+  // Propeller torque reaction (rolls left under power). Real Cessnas have
+  // their vertical fin rigged offset to cancel this at cruise, so the visible
+  // effect is small except during high-throttle / low-speed transients (e.g.
+  // takeoff roll, go-around). Coefficient tuned to keep the cruise roll
+  // disturbance below the roll-damping equilibrium — empirically -0.01 keeps
+  // hands-off cruise from spiraling within the first 30 s.
+  _M_B.x += -0.01 * T;
 
   // 4) Transform body force to world, add gravity.
   _F_W.copy(_F_B).applyQuaternion(state.q);
@@ -129,6 +138,28 @@ export function physicsStep(
   state.omega_B.y += dot_r * dt;
   state.omega_B.z += dot_q * dt;
 
+  // Stability augmentation (SAS) — input-proportional damping on body rates.
+  // The aero-only lateral mode (Dutch roll + spiral) is mildly divergent at
+  // our spec coefficients, so without SAS the airframe slowly tumbles from
+  // hands-off cruise. We damp omega heavily when controls are neutral (15/s
+  // — full wing-leveler) and lightly when the pilot is actively flying (3/s)
+  // — smoothly blended on actual surface deflection so there's no jarring
+  // switch as inputs cross a threshold. With full aileron (Cl_da = 0.14 →
+  // ~30 rad/s² forcing) and the blended 3/s SAS, the steady-state roll rate
+  // is ~50°/s — responsive enough that pressing A or D feels immediate.
+  const usage = Math.max(
+    Math.abs(state.delta_a),
+    Math.abs(state.delta_e),
+    Math.abs(state.delta_r),
+  );
+  const SAS_MAX = 15.0;
+  const SAS_MIN = 3.0;
+  const sasRate = SAS_MAX - (SAS_MAX - SAS_MIN) * Math.min(1, usage);
+  const sasFactor = Math.max(0, 1 - sasRate * dt);
+  state.omega_B.x *= sasFactor;
+  state.omega_B.y *= sasFactor;
+  state.omega_B.z *= sasFactor;
+
   state.x_W.x += state.v_W.x * dt;
   state.x_W.y += state.v_W.y * dt;
   state.x_W.z += state.v_W.z * dt;
@@ -154,10 +185,20 @@ export function physicsStep(
   state.q.normalize();
 
   // 9) Ground clamp.
-  let groundY = getGroundHeight(state.x_W.x, state.x_W.z);
-  if (!Number.isFinite(groundY) || groundY <= 0) groundY = C.groundY;
+  // Terrain height at (x, z) — may be negative (water/valleys) or positive
+  // (mountains). FLIGHT_MODEL.groundY represents the aircraft's wheel-to-
+  // ground offset (≈ 0.5 m), so the "on-ground" surface is terrain + that
+  // offset. The previous version replaced any non-positive terrain height
+  // with FLIGHT_MODEL.groundY, which (a) made the aircraft incapable of
+  // flying below y = 0.5 anywhere on the map, (b) caused ground collision
+  // to disagree with the visible terrain over mountains.
+  const rawTerrain = getGroundHeight(state.x_W.x, state.x_W.z);
+  const terrainY = Number.isFinite(rawTerrain) ? rawTerrain : 0;
+  const groundY = terrainY + C.groundY;
 
   if (state.x_W.y <= groundY + 1e-4) {
+    // Hard clamp: never let the aircraft be below the ground surface, no
+    // matter how fast it was descending or how steeply the terrain rises.
     state.x_W.y = groundY;
     if (state.v_W.y < 0) state.v_W.y = 0;
     state.onGround = true;

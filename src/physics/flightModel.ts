@@ -17,16 +17,38 @@ export const FLIGHT_MODEL = {
 
   CYbeta: -0.31, CYdr: 0.187,
 
-  Clbeta: -0.089, Clp: -0.47, Clr: 0.096,
-  Clda: 0.04,    // tuned down from 0.178; raise to taste
+  // Cl_β reduced ~3× from textbook Cessna (-0.089 → -0.03): high dihedral
+  // is the main source of Dutch-roll coupling (sideslip → roll → yaw → ...
+  // exponential growth). Cl_da raised for snappier roll response — the
+  // remaining Dutch-roll growth is suppressed by the SAS in step.ts.
+  Clbeta: -0.03, Clp: -0.80, Clr: 0.04,
+  Clda: 0.14,    // strong roll authority — paired with SAS for stability
   Cldr: 0.0147,
 
   Cm0: 0.04, Cmalpha: -0.89, Cmq: -12.4,
   Cmde: 0.5,    // tuned down from 1.28; raise to taste
   Cmflaps: -0.05,
+  // Static elevator-trim offset (radians, applied to delta_e inside the pitch-
+  // moment calc only — does not affect the surface state itself). Represents
+  // the elevator trim tab a real pilot sets for level cruise. Tuned so the
+  // airframe trims hands-off at α ≈ 0.022 rad and V ≈ 50 m/s, matching the
+  // spawn condition in main.ts. Without this, Cm0 = +0.04 alone drives the
+  // airframe to climb to α ≈ 0.045 rad (2.6°) — well above the speed-balanced
+  // α at 50 m/s — and it pitches up uncontrollably before stalling.
+  pitchTrim: -0.04,
 
-  Cnbeta: 0.065, Cnp: -0.03, Cnr: -0.099,
-  Cnda: -0.053, Cndr: 0.074,
+  // Cn_da slashed from -0.053 → -0.008 (typical Cessna adverse-yaw value).
+  // Cn_β raised, Cn_r raised, Cn_p boosted (cross-axis damping) to suppress
+  // Dutch-roll oscillation. Combined with the reduced Cl_β above, the slow
+  // lateral mode no longer grows hands-off.
+  // Cn_dr lowered from 0.074 → 0.015 so sustained full rudder yields a small
+  // equilibrium β (~10°): previously the rudder authority far exceeded the
+  // weathercock yaw stiffness Cn_β, so β grew past 60° dynamically and the
+  // velocity vector ended up along body ±Z. At that point u → 0 and the
+  // alpha calculation (`atan2(-v, u)`) became meaningless — the wing was
+  // experiencing pure side-flow, not a stall, but the HUD reported STALL.
+  Cnbeta: 0.08, Cnp: -0.10, Cnr: -0.30,
+  Cnda: -0.008, Cndr: 0.015,
 
   thrustStaticSL: 2800, vMaxThrustZero: 75,
 

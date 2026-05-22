@@ -15,6 +15,7 @@ export type {
 export { MODE_REGISTRY, getDefaultModeId } from './registry.js';
 export type { ModeId } from './registry.js';
 export { ModeSwitcher } from './switcher.js';
+export { installModeHotkeys, MODE_HOTKEYS } from './hotkeys.js';
 export { FreeFlightMode } from './free-flight.js';
 export { TimeTrialMode } from './time-trial.js';
 export { DogfightMode } from './dogfight.js';

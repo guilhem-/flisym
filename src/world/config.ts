@@ -11,10 +11,35 @@ export const WORLD_CONFIG = {
     playableSize: 50_000,
   },
 
-  // §2 Terrain mesh
+  // §2 Terrain mesh — far LOD covering the whole playable area.
   terrain: {
     size: 50_000,
     segments: 199, // 199x199 segments → 200x200 verts → ~80k tris
+  },
+
+  // §2b Terrain LOD layers (near + mid). The near LOD follows the aircraft
+  // so high-detail vertices are concentrated where the camera looks. The
+  // mid LOD covers a larger area at moderate density to make the seam
+  // between near and the far mesh less jarring.
+  terrainLod: {
+    near: { size: 800, segments: 64, polygonOffsetFactor: -2 },  // ~8k tris
+    mid:  { size: 6_000, segments: 96, polygonOffsetFactor: -1 }, // ~18k tris
+  },
+
+  // §2c Vegetation — instanced tree cover over grass biomes.
+  trees: {
+    count: 600,
+    minHeight: 1,         // sand biome floor
+    maxHeight: 200,       // below rock-mix start so we stick to grass/lower
+    maxSlope: 0.30,       // skip steep ground (matches biome grassMaxSlope-ish)
+    runwayExclusionXZ: 250, // skip near the runway/spawn for clean takeoff sight lines
+    seed: 0xb1a17e,
+    trunkRadius: 0.5,
+    trunkHeight: 2.5,
+    canopyRadius: 2.0,
+    canopyHeight: 6.0,
+    trunkColor: '#5C3A21',
+    canopyColor: '#2C5C2A',
   },
 
   // §3 Heightmap noise

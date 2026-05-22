@@ -11,6 +11,7 @@ import {
 } from './physics/index.js';
 import { KeyboardInput } from './input/index.js';
 import { HUD } from './hud/index.js';
+import { HelpOverlay } from './hud/help-overlay.js';
 import { CameraRig } from './camera/index.js';
 import { EngineSound } from './audio/engine.js';
 import { NetClient } from './net/index.js';
@@ -18,8 +19,8 @@ import { checkWebGL, showWebGLUnavailableOverlay } from './webgl-check.js';
 import {
   ModeSwitcher,
   getDefaultModeId,
+  installModeHotkeys,
   type ModeContext,
-  type ModeId,
   type ModeTelemetryEvent,
 } from './modes/index.js';
 import { seedRNG } from './ai/index.js';
@@ -132,6 +133,9 @@ const input = new KeyboardInput();
 const hud = new HUD();
 document.body.appendChild(hud.root);
 
+const helpOverlay = new HelpOverlay();
+document.body.appendChild(helpOverlay.root);
+
 const cameraRig = new CameraRig(camera);
 cameraRig.attachInput();
 cameraRig.setMode('chase', true);
@@ -206,23 +210,22 @@ hud.setMode(switcher.status());
 
 // Mode hotkeys 1..4 (only when not over a focused input). Reserved by
 // docs/test-strategy.md §3.2 so Playwright can switch via keyboard.
-const MODE_HOTKEYS: Record<string, ModeId> = {
-  '1': 'free-flight',
-  '2': 'time-trial',
-  '3': 'dogfight',
-  '4': 'strike-mission',
-};
+installModeHotkeys(switcher, hud);
+
+// H, ? toggle help (and pause the sim). Escape closes only. Installed after
+// `switcher` so the overlay can render the current mode in its body.
 window.addEventListener('keydown', (e: KeyboardEvent) => {
-  if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-  const next = MODE_HOTKEYS[e.key];
-  if (!next) return;
-  if (switcher.getCurrent()?.meta.id === next) return;
-  try {
-    switcher.setMode(next);
-    hud.setMode(switcher.status());
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.error(`[mode] failed to switch to ${next}:`, err);
+  if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+    return;
+  }
+  if (e.repeat) return;
+  const k = e.key.toLowerCase();
+  if (k === 'h' || e.key === '?') {
+    helpOverlay.toggle(switcher.status());
+    e.preventDefault();
+  } else if (e.key === 'Escape' && helpOverlay.isOpen()) {
+    helpOverlay.hide();
+    e.preventDefault();
   }
 });
 
@@ -265,7 +268,19 @@ function verifyRenderOnce(): void {
 }
 
 function animate(): void {
-  const dt = Math.min(clock.getDelta(), 0.1);
+  const rawDt = clock.getDelta();
+  if (helpOverlay.isOpen()) {
+    // Paused: drain the timer (skip physics + mode + world) but keep
+    // rendering so the help overlay sits on top of a live frame. Test-
+    // visible frame counter still advances so Playwright can observe pause.
+    renderer.render(scene, camera);
+    verifyRenderOnce();
+    FLISYM_GLOBALS.__FLISYM_FRAMES__ = (FLISYM_GLOBALS.__FLISYM_FRAMES__ ?? 0) + 1;
+    if (!FLISYM_GLOBALS.__FLISYM_READY__) FLISYM_GLOBALS.__FLISYM_READY__ = true;
+    requestAnimationFrame(animate);
+    return;
+  }
+  const dt = Math.min(rawDt, 0.1);
   input.update(dt, controls);
   advance(state, dt, controls, getGroundHeight);
 
@@ -275,18 +290,18 @@ function animate(): void {
   hud.update(state);
   hud.setMode(switcher.status());
 
+  const enginerpm = RPM_IDLE + (RPM_FULL - RPM_IDLE) * state.throttle;
+  hud.setEngineRpm(enginerpm);
+  hud.setBrake(controls.brake);
+
   syncAircraftToState();
   aircraft.update(dt);
 
   worldClock = (worldClock + dt * TIME_SPEED_HOURS_PER_SEC) % 24;
   world.setTimeOfDay(worldClock);
-  world.update(dt);
+  world.update(dt, state.x_W.x, state.x_W.z);
 
-  engineSound.update(
-    state.throttle,
-    RPM_IDLE + (RPM_FULL - RPM_IDLE) * state.throttle,
-    state.stallFlag,
-  );
+  engineSound.update(state.throttle, enginerpm, state.stallFlag);
 
   aircraftVelocity.copy(state.v_W);
   cameraRig.update(dt, aircraft.group, aircraftVelocity);

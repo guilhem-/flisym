@@ -50,6 +50,8 @@ const HUD_CSS = `
 .flisym-hud .panel .row { display: flex; justify-content: space-between; gap: 12px; }
 .flisym-hud .panel .label { opacity: 0.65; }
 .flisym-hud .panel .value { font-weight: 600; font-variant-numeric: tabular-nums; }
+.flisym-hud .panel .value[data-brake="on"] { color: #ff6464; text-shadow: 0 0 4px rgba(255,80,80,0.6); }
+.flisym-hud .panel .value[data-brake="off"] { opacity: 0.55; }
 
 .flisym-hud .ai {
   position: absolute;
@@ -490,7 +492,9 @@ export class HUD {
   private readonly elHeading: HTMLSpanElement;
   private readonly elVSpeed: HTMLSpanElement;
   private readonly elThrottle: HTMLSpanElement;
+  private readonly elRpm: HTMLSpanElement;
   private readonly elFlaps: HTMLSpanElement;
+  private readonly elBrake: HTMLSpanElement;
   private readonly elHorizon: HTMLDivElement;
   private readonly elStall: HTMLDivElement;
   private readonly elChallenge: HTMLDivElement;
@@ -561,7 +565,9 @@ export class HUD {
       <div class="panel tr">
         <div class="row"><span class="label">VSI</span><span class="value" data-h="vspeed">0</span><span class="label">fpm</span></div>
         <div class="row"><span class="label">THR</span><span class="value" data-h="throttle">0</span><span class="label">%</span></div>
+        <div class="row"><span class="label">RPM</span><span class="value" data-h="rpm">0</span></div>
         <div class="row"><span class="label">FLAPS</span><span class="value" data-h="flaps">UP</span></div>
+        <div class="row"><span class="label">BRAKE</span><span class="value" data-h="brake" data-brake="off">OFF</span></div>
       </div>
       <div class="ai">
         <div class="ai-horizon" data-h="horizon"></div>
@@ -638,7 +644,9 @@ export class HUD {
     this.elHeading = this.q('heading');
     this.elVSpeed = this.q('vspeed');
     this.elThrottle = this.q('throttle');
+    this.elRpm = this.q('rpm');
     this.elFlaps = this.q('flaps');
+    this.elBrake = this.q('brake');
     this.elHorizon = this.q<HTMLDivElement>('horizon');
     this.elStall = this.q<HTMLDivElement>('stall');
     this.elChallenge = this.q<HTMLDivElement>('challenge');
@@ -867,6 +875,20 @@ export class HUD {
   /** Hide the end-of-course summary overlay. */
   hideFinishOverlay(): void {
     this.elFinishOverlay.classList.remove('on');
+  }
+
+  /** Engine RPM readout (top-right panel). Rounded to the nearest 10 for
+   *  display de-flicker. */
+  setEngineRpm(rpm: number): void {
+    const display = Math.max(0, Math.round(rpm / 10) * 10);
+    this.elRpm.textContent = String(display);
+  }
+
+  /** Parking-brake readout (top-right panel). Sets a `data-brake` attribute
+   *  too so CSS and tests can react. */
+  setBrake(on: boolean): void {
+    this.elBrake.textContent = on ? 'ON' : 'OFF';
+    this.elBrake.setAttribute('data-brake', on ? 'on' : 'off');
   }
 
   // ── v0.2 mode badge ──────────────────────────────────────────────────────

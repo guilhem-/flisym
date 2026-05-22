@@ -1,6 +1,11 @@
 // Keyboard input → Controls. See physics-spec §9.
 //
 // Convention reminder: forward stick (W) = nose down → elevatorCmd = -1.
+// Arrow keys mirror the stick convention so the mapping is consistent across
+// both bindings: ArrowUp = "push stick forward" = nose down; ArrowDown =
+// "pull stick back" = nose up. Left/right arrow keys remain directional
+// (Left = roll left, Right = roll right), which already matches the stick.
+//
 // Surface commands are produced as TARGETS in [-1..1]; the physics
 // `updateControlSurfaces` slews the actual deflections at 4.0/s and
 // self-centers at 3.0/s when no key is held. We mirror that self-centering
@@ -91,7 +96,10 @@ export class KeyboardInput {
         window.dispatchEvent(new CustomEvent('camera:cycle'));
       } else if (k === 'g') {
         window.dispatchEvent(new CustomEvent('challenge:reset'));
-      } else if (k.length === 1 && k >= '0' && k <= '9') {
+      } else if (k.length === 1 && (k === '0' || (k >= '5' && k <= '9'))) {
+        // Digits 1-4 are reserved for mode hotkeys (see src/modes/hotkeys.ts).
+        // Time presets only fire on 5-9 and 0 to avoid a double-action on
+        // every mode switch.
         this.dispatchTimePreset(k);
       }
     }
@@ -116,12 +124,13 @@ export class KeyboardInput {
   }
 
   private dispatchTimePreset(digit: string): void {
-    // 1 → 05:00, 2 → 07:00, ..., 9 → 21:00, 0 → 23:00
+    // 5 → 13:00, 6 → 15:00, 7 → 17:00, 8 → 19:00, 9 → 21:00, 0 → 23:00
+    // (1-4 are reserved for mode hotkeys and do not reach this method.)
     let hour: number;
     if (digit === '0') {
       hour = 23;
     } else {
-      const i = Number(digit); // 1..9
+      const i = Number(digit); // 5..9
       hour = 5 + (i - 1) * 2;
     }
     window.dispatchEvent(new CustomEvent('time:set', { detail: hour }));
@@ -131,10 +140,12 @@ export class KeyboardInput {
   update(dt: number, controls: Controls): void {
     const held = (k: string): boolean => this.pressed.has(k);
 
-    // --- Elevator: W or Down arrow → nose down (-1); S or Up arrow → nose up (+1).
+    // --- Elevator: W or Up arrow → nose down (-1); S or Down arrow → nose up (+1).
+    // Stick convention: pushing forward (W / ArrowUp) lowers the nose;
+    // pulling back (S / ArrowDown) raises it.
     let elevatorTarget = 0;
-    if (held('w') || held('arrowdown')) elevatorTarget -= 1;
-    if (held('s') || held('arrowup')) elevatorTarget += 1;
+    if (held('w') || held('arrowup')) elevatorTarget -= 1;
+    if (held('s') || held('arrowdown')) elevatorTarget += 1;
     controls.elevatorCmd = approach(
       controls.elevatorCmd,
       elevatorTarget,

@@ -163,7 +163,7 @@ describe('world rendering scene graph', () => {
       ),
     );
 
-    const required: ReadonlyArray<string> = ['Terrain', 'Runway', 'Water'];
+    const required: ReadonlyArray<string> = ['TerrainFar', 'Runway', 'Water'];
     for (const name of required) {
       const mesh = world.mesh.children.find((c) => c.name === name) as
         | THREE.Mesh
@@ -266,7 +266,7 @@ describe('world rendering scene graph', () => {
       ),
     );
 
-    for (const name of ['Terrain', 'Runway', 'Water']) {
+    for (const name of ['TerrainFar', 'Runway', 'Water']) {
       const mesh = world.mesh.children.find((c) => c.name === name) as
         | THREE.Mesh
         | undefined;

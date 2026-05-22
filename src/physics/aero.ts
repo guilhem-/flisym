@@ -25,13 +25,23 @@ export interface AeroResult {
   stall: boolean;
 }
 
-/** Lift coefficient with linear → flat-plate stall blend (spec §5.1). */
+/** Lift coefficient with linear → flat-plate stall blend (spec §5.1).
+ *
+ * The `stall` return only fires for POSITIVE-α stall — the conventional
+ * upright wing-stalled condition that the HUD warning is meant to flag.
+ * A pilot pushing the stick forward briefly drives α negative (relative
+ * wind from above the wing); the wing is fine there, just producing less
+ * lift, so we don't surface that as a stall to the user even when |α|
+ * crosses the symmetric threshold. An inverted stall would require very
+ * large negative α (≤ -28°), where we DO flag it.
+ */
 export function liftCoefficient(
   alpha: number,
   delta_e: number,
   delta_f: number,
 ): { CL: number; stall: boolean } {
   const alphaStall = C.alphaStallClean + C.alphaStallFlapsDelta * delta_f;
+  const ALPHA_STALL_NEG = 0.50; // 28° — only a sustained inverted pushover hits this
   const CLmax = C.CLmaxClean + C.CLmaxFlapsBonus * delta_f;
   const dCL_flaps = C.CLflaps * delta_f;
   const CL_linear =
@@ -42,12 +52,18 @@ export function liftCoefficient(
     return { CL: CL_linear, stall: false };
   }
   const sgn = Math.sign(alpha) || 1;
+  // Whether to flag this as a stall: positive-α stalls always flag; negative
+  // (inverted) stalls only flag past a much larger threshold.
+  const isStallWarn = alpha > 0 || alpha < -ALPHA_STALL_NEG;
   if (a - alphaStall < 0.262) {
     // Smooth post-stall drop-off, not yet flat-plate
-    return { CL: sgn * (CLmax - 2.0 * (a - alphaStall)), stall: true };
+    return { CL: sgn * (CLmax - 2.0 * (a - alphaStall)), stall: isStallWarn };
   }
-  // Deep stall: flat-plate behavior
-  return { CL: sgn * 0.9 * Math.sin(2 * alpha), stall: true };
+  // Deep stall: flat-plate behavior. Use |α| inside sin() so the natural
+  // antisymmetry of `sgn` produces the correct sign at negative α (previous
+  // `sin(2*α)` cancelled the sgn factor and yielded positive CL at deep
+  // negative α).
+  return { CL: sgn * 0.9 * Math.sin(2 * a), stall: isStallWarn };
 }
 
 /** Drag coefficient (spec §5.2). */
@@ -89,7 +105,12 @@ export function rollMomentCoefficient(
   );
 }
 
-/** Pitch-moment coefficient Cm (spec §5.5). */
+/** Pitch-moment coefficient Cm (spec §5.5).
+ *
+ * `pitchTrim` is added to the elevator deflection inside this calc only,
+ * representing the static elevator-trim tab. It does not change `state.delta_e`
+ * itself, so HUD readouts and damage scaling still see the physical surface.
+ */
 export function pitchMomentCoefficient(
   alpha: number,
   qHat: number,
@@ -97,11 +118,12 @@ export function pitchMomentCoefficient(
   delta_f: number,
   elevatorAuthority: number = 1,
 ): number {
+  const delta_e_eff = delta_e + C.pitchTrim;
   return (
     C.Cm0 +
     C.Cmalpha * alpha +
     C.Cmq * qHat +
-    C.Cmde * elevatorAuthority * delta_e +
+    C.Cmde * elevatorAuthority * delta_e_eff +
     C.Cmflaps * delta_f
   );
 }
@@ -147,6 +169,13 @@ export function computeAeroForcesMoments(
 
   const alpha = Math.atan2(-v, u);
   const beta = Math.asin(Math.max(-1, Math.min(1, w_b / V)));
+  // Stall warning only makes sense when there's meaningful forward airflow
+  // over the wing. At extreme sideslip (|β| > ~60°) the velocity vector is
+  // nearly along body ±Z, body-frame u → 0, and `atan2(-v, u)` produces
+  // wildly large α numerically — but the wing isn't experiencing the kind
+  // of stall the HUD warning is meant to indicate. Gate the stall return
+  // on u being a meaningful fraction of V.
+  const hasForwardAirflow = u > 0.5 * V;
 
   const qbar = 0.5 * rho * V * V;
 
@@ -202,17 +231,20 @@ export function computeAeroForcesMoments(
   let M_pitch = qbar * C.wingArea * C.mac * Cm;
   const N_yaw = qbar * C.wingArea * C.span * Cn;
 
-  // Stall buffet (cosmetic; spec §5.6)
+  // Stall buffet — small oscillating pitch moment as a sensory cue. Amplitude
+  // clamped so it remains a feedback signal, not a control hijacker: the old
+  // formula (0.6 × unbounded `excess`) reached ~6× the max elevator moment
+  // deep in stall, making nose-down recovery input ineffective.
   if (stall) {
     const alphaStall =
       C.alphaStallClean + C.alphaStallFlapsDelta * state.delta_f;
-    const excess = (Math.abs(alpha) - alphaStall) / 0.1;
-    M_pitch += 0.6 * Math.sin(state.time * 18) * excess;
+    const excess = Math.min(1, (Math.abs(alpha) - alphaStall) / 0.1);
+    M_pitch += 0.1 * Math.sin(state.time * 18) * excess;
   }
 
   return {
     F_aero_B: new THREE.Vector3(Fx, Fy, Fz),
     M_aero_B: new THREE.Vector3(L_roll, N_yaw, M_pitch),
-    stall,
+    stall: stall && hasForwardAirflow,
   };
 }

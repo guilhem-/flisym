@@ -15,6 +15,8 @@ import { Terrain } from './terrain.js';
 import { Water } from './water.js';
 import { Runway } from './runway.js';
 import { createSky, type SkySystem } from './sky.js';
+import { createNoise } from './heightmap.js';
+import { Trees } from './trees.js';
 
 export { WORLD_CONFIG } from './config.js';
 export { getHeightAt, createNoise } from './heightmap.js';
@@ -27,23 +29,50 @@ export class World {
   readonly mesh: THREE.Group;
   readonly fog: THREE.FogExp2;
 
-  private readonly terrain: Terrain;
+  private readonly terrainFar: Terrain;
+  private readonly terrainMid: Terrain;
+  private readonly terrainNear: Terrain;
   private readonly water: Water;
   private readonly runway: Runway;
   private readonly skySys: SkySystem;
+  private readonly trees: Trees;
 
   constructor() {
     this.mesh = new THREE.Group();
     this.mesh.name = 'World';
 
-    this.terrain = new Terrain();
+    // Three terrain LODs share one noise instance so they all agree about
+    // ground height (and `getGroundHeight` returns the same value the
+    // far-mesh was built with).
+    const sharedNoise = createNoise();
+    this.terrainFar = new Terrain({ noise: sharedNoise, name: 'TerrainFar' });
+    this.terrainMid = new Terrain({
+      noise: sharedNoise,
+      size: WORLD_CONFIG.terrainLod.mid.size,
+      segments: WORLD_CONFIG.terrainLod.mid.segments,
+      polygonOffsetFactor: WORLD_CONFIG.terrainLod.mid.polygonOffsetFactor,
+      followAircraft: true,
+      name: 'TerrainMid',
+    });
+    this.terrainNear = new Terrain({
+      noise: sharedNoise,
+      size: WORLD_CONFIG.terrainLod.near.size,
+      segments: WORLD_CONFIG.terrainLod.near.segments,
+      polygonOffsetFactor: WORLD_CONFIG.terrainLod.near.polygonOffsetFactor,
+      followAircraft: true,
+      name: 'TerrainNear',
+    });
     this.water = new Water();
     this.runway = new Runway();
     this.skySys = createSky();
+    this.trees = new Trees(sharedNoise);
 
-    this.mesh.add(this.terrain.mesh);
+    this.mesh.add(this.terrainFar.mesh);
+    this.mesh.add(this.terrainMid.mesh);
+    this.mesh.add(this.terrainNear.mesh);
     this.mesh.add(this.water.mesh);
     this.mesh.add(this.runway.mesh);
+    this.mesh.add(this.trees.mesh);
     this.mesh.add(this.skySys.sky);
     this.mesh.add(this.skySys.sun);
     this.mesh.add(this.skySys.sun.target);
@@ -54,9 +83,13 @@ export class World {
   }
 
   /**
-   * Per-frame update. Currently only water (placeholder) animates.
+   * Per-frame update. Repositions the follow-aircraft terrain LODs (snapped
+   * to their grid step so they don't re-displace every frame) and animates
+   * the water material.
    */
-  update(dt: number): void {
+  update(dt: number, aircraftX = 0, aircraftZ = 0): void {
+    this.terrainNear.setCenter(aircraftX, aircraftZ);
+    this.terrainMid.setCenter(aircraftX, aircraftZ);
     this.water.update(dt);
   }
 
@@ -73,7 +106,7 @@ export class World {
    * data the mesh was built from. Use this for physics / aircraft contact.
    */
   getGroundHeight(x: number, z: number): number {
-    return this.terrain.getGroundHeight(x, z);
+    return this.terrainFar.getGroundHeight(x, z);
   }
 
   /**
