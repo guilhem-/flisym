@@ -3,6 +3,9 @@ import { defineConfig } from 'vite';
 
 export default defineConfig({
   root: '.',
+  // Relative base so dist/index.html and docs/play.html work from any path,
+  // including file:// (needed for the offline single-file build).
+  base: './',
   publicDir: 'public',
   build: {
     target: 'es2022',
