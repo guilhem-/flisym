@@ -13,3 +13,7 @@ coverage/
 playwright-report/
 test-results/
 .playwright/
+
+# Producer/agent scaffold — internal LLM-orchestration notes, kept local only.
+LOG.md
+AGENTS/
