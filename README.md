@@ -2,6 +2,13 @@
 
 Browser-based flight simulator. TypeScript + Three.js + Vite + Cannon-es.
 
+## Play it
+
+**[https://guilhem-.github.io/flisym/](https://guilhem-.github.io/flisym/)**
+
+Single-file offline build, no install needed. Served from `docs/play.html`
+via GitHub Pages; rebuild locally with `npm run build:offline`.
+
 ## Quick start
 
 ```bash
@@ -37,6 +44,7 @@ dark background — that is the toolchain proof.
 | --- | --- |
 | `npm run dev` | Start Vite dev server with HMR |
 | `npm run build` | Type-check then build production bundle into `dist/` |
+| `npm run build:offline` | Build, then inline the bundle into `docs/play.html` (self-contained, plays from `file://` or any static host) |
 | `npm run preview` | Preview the production build locally |
 | `npm run typecheck` | Run `tsc --noEmit` |
 | `npm test` | Run Vitest once |
